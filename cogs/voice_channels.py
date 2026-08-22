@@ -9,7 +9,7 @@ class TempVoiceCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.mute_durations = {}  
-        print("🚀 [Debug v5] TempVoiceCog 已啟動（除錯加強版）")
+        print("🚀 [Debug v6] TempVoiceCog 已啟動（進階狀態修復版）")
         self.check_afk_loop.start()
 
     def cog_unload(self):
@@ -17,6 +17,7 @@ class TempVoiceCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
+        # 1. 偵測點擊觸發頻道建立新房間
         if after.channel and after.channel.id == TRIGGER_CHANNEL_ID:
             print(f"✨ 偵測到使用者進入建立頻道: {member.name}")
             guild = member.guild
@@ -39,6 +40,7 @@ class TempVoiceCog(commands.Cog):
                 return False
             return "的房間" in channel.name and channel.id != TRIGGER_CHANNEL_ID
 
+        # 2. 自動清理空房間
         if is_temp_channel(before.channel):
             if len(before.channel.members) == 0:
                 try:
@@ -53,16 +55,14 @@ class TempVoiceCog(commands.Cog):
             for channel in guild.voice_channels:
                 if "的房間" in channel.name and channel.id != TRIGGER_CHANNEL_ID:
                     for member in channel.members:
-                        # 【除錯】印出當前掃到的成員及其狀態
                         v = member.voice
                         if v:
-                            print(f"🔍 檢查成員 {member.name} | self_mute={v.self_mute}, mute={v.mute}")
-                            
+                            # 只要在臨時房間內，不管是事先靜音還是進去後靜音，直接判定！
                             if v.self_mute or v.mute:
                                 self.mute_durations[member.id] = self.mute_durations.get(member.id, 0) + 3
-                                print(f"⏱️ {member.name} 靜音中，累計秒數: {self.mute_durations[member.id]}")
+                                print(f"⏱️ [計時中] {member.name} 在臨時房間靜音，目前秒數: {self.mute_durations[member.id]}")
 
-                                if self.mute_durations[member.id] >= 10:
+                                if self.mute_durations[member.id] >= 10:  # 測試用 10 秒
                                     rest_channel = guild.get_channel(REST_CHANNEL_ID)
                                     if rest_channel:
                                         try:
@@ -75,11 +75,10 @@ class TempVoiceCog(commands.Cog):
                                     
                                     self.mute_durations[member.id] = 0
                             else:
+                                # 如果沒有靜音，重置秒數
                                 if member.id in self.mute_durations and self.mute_durations[member.id] > 0:
                                     print(f"🔄 {member.name} 解除靜音，重置計數")
                                     self.mute_durations[member.id] = 0
-                        else:
-                            print(f"⚠️ 成員 {member.name} 不在有效的 voice 狀態中")
 
     @check_afk_loop.before_loop
     async def before_check_afk_loop(self):
