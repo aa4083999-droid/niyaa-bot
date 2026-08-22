@@ -67,7 +67,7 @@ class TempVoiceCog(commands.Cog):
     async def afk_kick_task(self, member: discord.Member, channel: discord.VoiceChannel):
         try:
             # ⏳ 設定掛機時間：這裡設定為 600 秒 (10分鐘)，你可以自行更改秒數
-            await asyncio.sleep(600)
+            await asyncio.sleep(10)
             
             # 時間到後，檢查使用者是否還在該臨時頻道且依然處於靜音狀態
             if member.voice and member.voice.channel and member.voice.channel.id == channel.id:
