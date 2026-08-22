@@ -1,13 +1,12 @@
+import asyncio
 import io
 import os
 import discord
 from discord.ext import commands
 from PIL import Image, ImageDraw, ImageFont
-import asyncio
 
 # ==================== 設定區 (請修改這裡) ====================
 WELCOME_CHANNEL_ID = 1506072169145307339  # 貼上你想發送歡迎訊息的頻道 ID
-# 如果你的圖片是 jpg 格式，請改成 "welcome_background.jpg"
 DOG_BG_IMAGE_FILENAME = "welcome_background.jpg"
 # ============================================================
 
@@ -19,8 +18,12 @@ class WelcomeCog(commands.Cog):
 
     async def create_welcome_card(self, member: discord.Member) -> io.BytesIO:
         width, height = 800, 400
-        card_dir = os.path.dirname(os.path.abspath(__file__))
-        bg_path = os.path.join(card_dir, DOG_BG_IMAGE_FILENAME)
+
+        # 取得專案根目錄 (往上一層離開 cogs 資料夾)
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        root_dir = os.path.dirname(current_dir)
+
+        bg_path = os.path.join(root_dir, DOG_BG_IMAGE_FILENAME)
 
         # 1. 載入背景圖片
         if os.path.exists(bg_path):
@@ -34,7 +37,7 @@ class WelcomeCog(commands.Cog):
             print(f"⚠️ 找不到背景圖片檔案: {bg_path}")
             bg = Image.new("RGBA", (width, height), (30, 30, 45, 255))
 
-        # 加上一層半透明黑色遮罩（讓文字和頭貼更顯眼）
+        # 加上一層半透明黑色遮罩
         overlay = Image.new("RGBA", (width, height), (0, 0, 0, 100))
         card = Image.alpha_composite(bg, overlay)
 
@@ -69,17 +72,24 @@ class WelcomeCog(commands.Cog):
         except Exception as e:
             print(f"❌ 無法處理頭貼: {e}")
 
-        # 3. 寫入文字
+        # 3. 寫入文字（自動尋找根目錄的字型檔）
         draw = ImageDraw.Draw(card)
+        font_path_zh = os.path.join(root_dir, "font.ttc")  # 建議在根目錄放一個字型檔
+
         try:
-            font_path_zh = "msjh.ttc"
-            font_title = ImageFont.truetype(font_path_zh, 32)
-            font_sub = ImageFont.truetype(font_path_zh, 22)
+            if os.path.exists(font_path_zh):
+                font_title = ImageFont.truetype(font_path_zh, 32)
+                font_sub = ImageFont.truetype(font_path_zh, 22)
+            else:
+                # 如果找不到自訂字型，退回預設（可能會變方框，但不會報錯）
+                print(f"⚠️ 找不到字型檔案 {font_path_zh}，使用預設字型")
+                font_title = ImageFont.load_default()
+                font_sub = ImageFont.load_default()
         except IOError:
             font_title = ImageFont.load_default()
             font_sub = ImageFont.load_default()
 
-        # 歡迎文字（亮白色 + 粗黑色描邊，超級清晰）
+        # 歡迎文字
         text_welcome = f"歡迎 {member.name} 狗勾"
         bbox_title = draw.textbbox((0, 0), text_welcome, font=font_title)
         w_title = bbox_title[2] - bbox_title[0]
@@ -92,7 +102,7 @@ class WelcomeCog(commands.Cog):
             stroke_fill=(0, 0, 0),
         )
 
-        # 副標題（改用不會變亂碼的符號，換成亮黃色吸引注意）
+        # 副標題
         text_sub = "期待你在霓夜的狗窩裡玩得開心！"
         bbox_sub = draw.textbbox((0, 0), text_sub, font=font_sub)
         w_sub = bbox_sub[2] - bbox_sub[0]
