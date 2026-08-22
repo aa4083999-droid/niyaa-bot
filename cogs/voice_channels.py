@@ -8,9 +8,8 @@ REST_CHANNEL_ID = 1517983383052091523
 class TempVoiceCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.mute_durations = {}  # 記錄每個成員連續靜音的秒數
-        print("🚀 [Debug v4] TempVoiceCog 初始化成功，準備啟動背景掃描任務...")
-        # 啟動循環任務
+        self.mute_durations = {}  
+        print("🚀 [Debug v5] TempVoiceCog 已啟動（除錯加強版）")
         self.check_afk_loop.start()
 
     def cog_unload(self):
@@ -18,7 +17,6 @@ class TempVoiceCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
-        # 1. 偵測使用者是否加入了「觸發建立房間」
         if after.channel and after.channel.id == TRIGGER_CHANNEL_ID:
             print(f"✨ 偵測到使用者進入建立頻道: {member.name}")
             guild = member.guild
@@ -36,7 +34,6 @@ class TempVoiceCog(commands.Cog):
             except Exception as e:
                 print(f"❌ 建立臨時語音時發生錯誤: {e}")
 
-        # 2. 空房自動清理
         def is_temp_channel(channel):
             if not channel:
                 return False
@@ -50,34 +47,39 @@ class TempVoiceCog(commands.Cog):
                 except Exception as e:
                     print(f"❌ 刪除頻道失敗: {e}")
 
-    # 每 3 秒背景自動掃描一次所有臨時房間的靜音狀態
     @tasks.loop(seconds=3.0)
     async def check_afk_loop(self):
         for guild in self.bot.guilds:
             for channel in guild.voice_channels:
                 if "的房間" in channel.name and channel.id != TRIGGER_CHANNEL_ID:
                     for member in channel.members:
-                        # 檢查是否處於靜音
-                        if member.voice and (member.voice.self_mute or member.voice.mute):
-                            self.mute_durations[member.id] = self.mute_durations.get(member.id, 0) + 3
-                            print(f"⏱️ 成員 {member.name} 在臨時房靜音中... 已累積 {self.mute_durations[member.id]} 秒")
+                        # 【除錯】印出當前掃到的成員及其狀態
+                        v = member.voice
+                        if v:
+                            print(f"🔍 檢查成員 {member.name} | self_mute={v.self_mute}, mute={v.mute}")
+                            
+                            if v.self_mute or v.mute:
+                                self.mute_durations[member.id] = self.mute_durations.get(member.id, 0) + 3
+                                print(f"⏱️ {member.name} 靜音中，累計秒數: {self.mute_durations[member.id]}")
 
-                            # 超過 10 秒就移走
-                            if self.mute_durations[member.id] >= 10:
-                                rest_channel = guild.get_channel(REST_CHANNEL_ID)
-                                if rest_channel:
-                                    try:
-                                        await member.move_to(rest_channel, reason="在臨時語音頻道掛機過久，自動移至休息區")
-                                        print(f"🚀 [掃描成功] 已將掛機成員 {member.name} 移至休息區！")
-                                    except Exception as e:
-                                        print(f"❌ 移動成員失敗: {e}")
-                                else:
-                                    print(f"❌ 找不到休息區頻道 ID: {REST_CHANNEL_ID}")
-                                
-                                self.mute_durations[member.id] = 0
+                                if self.mute_durations[member.id] >= 10:
+                                    rest_channel = guild.get_channel(REST_CHANNEL_ID)
+                                    if rest_channel:
+                                        try:
+                                            await member.move_to(rest_channel, reason="在臨時語音頻道掛機過久，自動移至休息區")
+                                            print(f"🚀 [成功移動] 已將 {member.name} 移至休息區！")
+                                        except Exception as e:
+                                            print(f"❌ [移動失敗] 報錯原因: {e}")
+                                    else:
+                                        print(f"❌ 找不到休息區頻道 ID: {REST_CHANNEL_ID}")
+                                    
+                                    self.mute_durations[member.id] = 0
+                            else:
+                                if member.id in self.mute_durations and self.mute_durations[member.id] > 0:
+                                    print(f"🔄 {member.name} 解除靜音，重置計數")
+                                    self.mute_durations[member.id] = 0
                         else:
-                            if member.id in self.mute_durations:
-                                self.mute_durations[member.id] = 0
+                            print(f"⚠️ 成員 {member.name} 不在有效的 voice 狀態中")
 
     @check_afk_loop.before_loop
     async def before_check_afk_loop(self):
