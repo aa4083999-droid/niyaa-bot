@@ -1,10 +1,10 @@
 import asyncio
 import discord
-from discord.ext import commands, tasks
+from discord.ext import commands
 
 # ==================== 設定區 ====================
 TRIGGER_CHANNEL_ID = 1510980890682200124  # 建立房間的觸發頻道 ID
-REST_CHANNEL_ID = 1510980890682200124    # <- 請把這裡換成「睡眠區」或「休息區」的語音頻道 ID
+REST_CHANNEL_ID = 1517983383052091523     # 休息區（睡眠區）的語音頻道 ID
 # ================================================
 
 class TempVoiceCog(commands.Cog):
@@ -35,11 +35,10 @@ class TempVoiceCog(commands.Cog):
             except Exception as e:
                 print(f"❌ 建立臨時語音時發生錯誤: {e}")
 
-        # 2. 掛機偵測邏輯：當使用者進入臨時頻道，且處於「靜音」或「離開/不動」狀態時開始計時
-        # 這裡以「自己關閉麥克風 (self_mute)」或「被伺服器靜音」作為掛機判定範例
+        # 2. 掛機偵測邏輯：當使用者進入臨時頻道，且處於「靜音」狀態時開始計時
         if after.channel and after.channel.id in self.temp_channels:
             if after.self_mute or after.mute:
-                # 如果開始掛機，啟動 10 分鐘（600秒）倒數計時
+                # 啟動計時（測試用設為 10 秒，之後如果要改回 10 分鐘可以改成 600）
                 if member.id not in self.afk_timers:
                     self.afk_timers[member.id] = self.bot.loop.create_task(self.afk_kick_task(member, after.channel))
             else:
@@ -50,12 +49,10 @@ class TempVoiceCog(commands.Cog):
 
         # 3. 離開頻道時的清理與取消計時
         if before.channel and before.channel.id in self.temp_channels:
-            # 取消該成員的掛機計時
             if member.id in self.afk_timers:
                 self.afk_timers[member.id].cancel()
                 del self.afk_timers[member.id]
 
-            # 如果臨時頻道內沒人了，就自動刪除
             if len(before.channel.members) == 0:
                 try:
                     await before.channel.delete(reason="臨時語音頻道已無人使用，自動清理")
@@ -66,7 +63,7 @@ class TempVoiceCog(commands.Cog):
     # 背景掛機計時任務函式
     async def afk_kick_task(self, member: discord.Member, channel: discord.VoiceChannel):
         try:
-            # ⏳ 設定掛機時間：這裡設定為 600 秒 (10分鐘)，你可以自行更改秒數
+            # ⏳ 測試用設定：等待 10 秒（確定運作正常後，可把 10 改回 600）
             await asyncio.sleep(10)
             
             # 時間到後，檢查使用者是否還在該臨時頻道且依然處於靜音狀態
@@ -75,8 +72,9 @@ class TempVoiceCog(commands.Cog):
                     rest_channel = member.guild.get_channel(REST_CHANNEL_ID)
                     if rest_channel:
                         await member.move_to(rest_channel, reason="在臨時語音頻道掛機過久，自動移至休息區")
+                    else:
+                        print(f"❌ 找不到 ID 為 {REST_CHANNEL_ID} 的休息區頻道！")
         except asyncio.CancelledError:
-            # 如果使用者解除靜音或離開，計時任務被取消會進到這裡
             pass
         finally:
             if member.id in self.afk_timers:
