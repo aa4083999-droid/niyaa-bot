@@ -72,13 +72,13 @@ class RoleSelectionView(discord.ui.View):
             )
 
 
-# 2. 抽獎按鈕介面（已正確套用新的抽獎專用表情符號）
+# 2. 抽獎按鈕介面（支援多個限定身分組）
 class GiveawayView(discord.ui.View):
 
-    def __init__(self, prize: str, required_role_id: int):
+    def __init__(self, prize: str, required_role_ids: list):
         super().__init__(timeout=None)
         self.prize = prize
-        self.required_role_id = required_role_id
+        self.required_role_ids = required_role_ids  # 這裡改為接受身分組 ID 列表
         self.participants = set()
 
         # 參與抽獎按鈕（使用新的抽獎貼圖）
@@ -102,11 +102,16 @@ class GiveawayView(discord.ui.View):
         self.add_item(btn_end)
 
     async def join_giveaway(self, interaction: discord.Interaction):
-        if self.required_role_id != 0:
-            role = interaction.guild.get_role(self.required_role_id)
-            if role and role not in interaction.user.roles:
+        # 如果有設定限制的身分組清單
+        if self.required_role_ids:
+            # 檢查使用者身上是否擁有其中任何一個身分組
+            user_role_ids = [role.id for role in interaction.user.roles]
+            has_permission = any(r_id in user_role_ids for r_id in self.required_role_ids)
+            
+            if not has_permission:
+                role_mentions = "、".join([f"<@&{r_id}>" for r_id in self.required_role_ids])
                 await interaction.response.send_message(
-                    f"❌ 參加此抽獎需要擁有 **{role.name}** 身分組才行喔！",
+                    f"❌ 參加此抽獎需要擁有以下其中一個身分組才行喔：\n{role_mentions}",
                     ephemeral=True,
                 )
                 return
@@ -199,30 +204,30 @@ class GeneralCog(commands.Cog):
         await interaction.followup.send("✅ 身分組領取按鈕面板已成功發送！")
 
     @app_commands.command(
-        name="giveaway", description="[管理員] 發起一場抽獎活動（可指定限定身分組）"
+        name="giveaway", description="[管理員] 發起一場抽獎活動（指定特定身分組參加）"
     )
     @app_commands.checks.has_permissions(administrator=True)
     async def giveaway(
         self, 
         interaction: discord.Interaction, 
-        獎品名稱: str, 
-        限定身分組: discord.Role = None
+        獎品名稱: str
     ):
-        target_role_id = 限定身分組.id if 限定身分組 else 0
-        role_mention = f"<@&{target_role_id}>" if target_role_id != 0 else "無限制"
+        # 指定好的兩個身分組 ID
+        target_role_ids = [1540502886230790185, 1506638783481643131]
+        role_mentions = "、".join([f"<@&{r_id}>" for r_id in target_role_ids])
 
         embed = discord.Embed(
             title="🎁 霓夜台 200 追蹤紀念抽獎活動！",
             description=(
                 f"本次抽獎獎品：**{獎品名稱}**\n"
-                f"🔒 參與資格：{role_mention}\n\n"
+                f"🔒 參與資格：{role_mentions}\n\n"
                 "👇 請點擊下方按鈕參與抽獎！"
             ),
             color=discord.Color.gold(),
         )
         embed.set_footer(text="霓夜的小精靈 • 抽獎系統")
 
-        view = GiveawayView(prize=獎品名稱, required_role_id=target_role_id)
+        view = GiveawayView(prize=獎品名稱, required_role_ids=target_role_ids)
         await interaction.channel.send(
             content=f"@everyone 準備抽獎啦～", embed=embed, view=view
         )
@@ -235,4 +240,4 @@ async def setup(bot):
     await bot.add_cog(GeneralCog(bot))
     # 註冊持久化 View，確保重啟後按鈕仍然有效
     bot.add_view(RoleSelectionView(stream_role_id=0, rpg_role_id=0))
-    bot.add_view(GiveawayView(prize="None", required_role_id=0))
+    bot.add_view(GiveawayView(prize="None", required_role_ids=[]))
