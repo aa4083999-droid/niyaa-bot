@@ -78,7 +78,7 @@ class GiveawayView(discord.ui.View):
     def __init__(self, prize: str, required_role_ids: list):
         super().__init__(timeout=None)
         self.prize = prize
-        self.required_role_ids = required_role_ids  # 這裡改為接受身分組 ID 列表
+        self.required_role_ids = required_role_ids
         self.participants = set()
 
         # 參與抽獎按鈕（使用新的抽獎貼圖）
@@ -102,9 +102,7 @@ class GiveawayView(discord.ui.View):
         self.add_item(btn_end)
 
     async def join_giveaway(self, interaction: discord.Interaction):
-        # 如果有設定限制的身分組清單
         if self.required_role_ids:
-            # 檢查使用者身上是否擁有其中任何一個身分組
             user_role_ids = [role.id for role in interaction.user.roles]
             has_permission = any(r_id in user_role_ids for r_id in self.required_role_ids)
             
@@ -169,8 +167,11 @@ class GeneralCog(commands.Cog):
             )
             return
 
+        # 加上 defer 防止 3 秒超時導致「該申請未受回應」
+        await interaction.response.defer(ephemeral=True)
+
         deleted = await interaction.channel.purge(limit=amount)
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"🧹 已成功清理 `{len(deleted)}` 條訊息！", ephemeral=True
         )
 
@@ -212,7 +213,7 @@ class GeneralCog(commands.Cog):
         interaction: discord.Interaction, 
         獎品名稱: str
     ):
-        # 指定好的兩個身分組 ID
+        # 設定允許參加抽獎的兩個指定身分組 ID
         target_role_ids = [1540502886230790185, 1506638783481643131]
         role_mentions = "、".join([f"<@&{r_id}>" for r_id in target_role_ids])
 
