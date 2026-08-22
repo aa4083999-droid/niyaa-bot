@@ -8,21 +8,16 @@ REST_CHANNEL_ID = 1517983383052091523
 class TempVoiceCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.temp_channels = set()       
         self.afk_timers = {}             
-        print("🚀 [Debug] TempVoiceCog 模組已成功初始化載入！")
+        print("🚀 [Debug v2] TempVoiceCog 模組已成功初始化載入！")
 
     @commands.Cog.listener()
     async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
-        # 只要有人在伺服器裡有任何語音動作，這裡就一定會印出名字
-        print(f"🎤 [Debug 語音事件] 成員 {member.name} 觸發了語音狀態更新")
-
         # 1. 偵測使用者是否加入了「觸發建立房間」
         if after.channel and after.channel.id == TRIGGER_CHANNEL_ID:
             print(f"✨ 偵測到使用者進入建立頻道: {member.name}")
             guild = member.guild
             category = after.channel.category  
-
             channel_name = f"🔊 {member.display_name} 的房間"
 
             try:
@@ -32,13 +27,19 @@ class TempVoiceCog(commands.Cog):
                     reason=f"{member.display_name} 建立的臨時語音頻道"
                 )
                 await member.move_to(new_channel)
-                self.temp_channels.add(new_channel.id)
                 print(f"✅ 成功建立並移動至新房間: {new_channel.name}")
             except Exception as e:
                 print(f"❌ 建立臨時語音時發生錯誤: {e}")
+            return
 
-        # 2. 掛機偵測
-        if after.channel and after.channel.id in self.temp_channels:
+        # 判定是否為臨時房間（只要頻道名稱包含 "的房間" 且不是觸發頻道，就視為臨時房）
+        def is_temp_channel(channel):
+            if not channel:
+                return False
+            return "的房間" in channel.name and channel.id != TRIGGER_CHANNEL_ID
+
+        # 2. 掛機偵測（只要在臨時頻道內，且處於靜音狀態）
+        if is_temp_channel(after.channel):
             print(f"🔍 成員在臨時頻道內，目前狀態 - self_mute: {after.self_mute}, mute: {after.mute}")
             if after.self_mute or after.mute:
                 if member.id not in self.afk_timers:
@@ -50,8 +51,8 @@ class TempVoiceCog(commands.Cog):
                     self.afk_timers[member.id].cancel()
                     del self.afk_timers[member.id]
 
-        # 3. 離開頻道
-        if before.channel and before.channel.id in self.temp_channels:
+        # 3. 離開頻道或切換頻道時清理計時與空房刪除
+        if is_temp_channel(before.channel):
             if member.id in self.afk_timers:
                 self.afk_timers[member.id].cancel()
                 del self.afk_timers[member.id]
@@ -59,10 +60,9 @@ class TempVoiceCog(commands.Cog):
             if len(before.channel.members) == 0:
                 try:
                     await before.channel.delete(reason="臨時語音頻道已無人使用，自動清理")
-                    self.temp_channels.remove(before.channel.id)
-                    print(f"🗑️ 臨時頻道已刪除")
-                except Exception:
-                    pass
+                    print(f"🗑️ 空臨時頻道已刪除: {before.channel.name}")
+                except Exception as e:
+                    print(f"❌ 刪除頻道失敗: {e}")
 
     async def afk_kick_task(self, member: discord.Member, channel: discord.VoiceChannel):
         try:
@@ -78,7 +78,7 @@ class TempVoiceCog(commands.Cog):
                     else:
                         print(f"❌ 找不到休息區頻道 ID: {REST_CHANNEL_ID}")
         except asyncio.CancelledError:
-            print(f"❌ 掛機計時被取消（可能使用者取消靜音或離開了）")
+            print(f"❌ 掛機計時被取消")
         finally:
             if member.id in self.afk_timers:
                 del self.afk_timers[member.id]
