@@ -6,17 +6,14 @@ from pathlib import Path
 import discord
 from discord.ext import commands
 
-
 BASE_DIR = Path(__file__).resolve().parent
 COGS_DIR = BASE_DIR / "cogs"
-
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
 )
 log = logging.getLogger("discord_bot")
-
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -59,9 +56,10 @@ async def on_ready():
         except discord.HTTPException:
             log.exception("同步斜線指令失敗")
 
+    # 優化：將狀態文字改為更符合目前功能的描述
     await bot.change_presence(
         activity=discord.Game(
-            name="霓夜的小精靈 v2.0 | 多功能 RPG 系統啟動中"
+            name="霓夜的小精靈 v2.0 | 守護狗窩與語音管理中 🐾"
         )
     )
 
