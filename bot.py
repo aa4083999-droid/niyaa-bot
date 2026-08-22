@@ -7,6 +7,7 @@ from discord.ext import commands
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
+intents.voice_states = True  # 啟用語音狀態更新意圖（用於偵測進入、離開與靜音）
 
 bot = commands.Bot(command_prefix="/", intents=intents)
 
@@ -39,8 +40,6 @@ async def main():
     async with bot:
         await load_extensions()
 
-        # 雲端環境變數讀取方式
-        # (如果在本地電腦測試，想直接執行，可以把 os.getenv(...) 暫時改成你的 "Token字串")
         token = os.getenv("DISCORD_TOKEN")
         if not token:
             print("❌ 錯誤：找不到 DISCORD_TOKEN 環境變數！")
