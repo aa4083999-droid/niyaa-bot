@@ -1,5 +1,6 @@
 import re
 import random
+import asyncio
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -167,13 +168,23 @@ class GeneralCog(commands.Cog):
             )
             return
 
-        # 加上 defer 防止 3 秒超時導致「該申請未受回應」
+        # 加上 defer 防止 3 秒超時
         await interaction.response.defer(ephemeral=True)
 
         deleted = await interaction.channel.purge(limit=amount)
-        await interaction.followup.send(
-            f"🧹 已成功清理 `{len(deleted)}` 條訊息！", ephemeral=True
+        
+        # 發送提示訊息
+        msg = await interaction.followup.send(
+            f"🧹 已成功清理 `{len(deleted)}` 條訊息！此訊息會在 1 分鐘後自動刪除。",
+            ephemeral=True
         )
+
+        # 暫停 60 秒後自動刪除該則提示
+        await asyncio.sleep(60)
+        try:
+            await msg.delete()
+        except discord.NotFound:
+            pass
 
     @app_commands.command(
         name="setup_roles",
@@ -213,7 +224,6 @@ class GeneralCog(commands.Cog):
         interaction: discord.Interaction, 
         獎品名稱: str
     ):
-        # 設定允許參加抽獎的兩個指定身分組 ID
         target_role_ids = [1540502886230790185, 1506638783481643131]
         role_mentions = "、".join([f"<@&{r_id}>" for r_id in target_role_ids])
 
