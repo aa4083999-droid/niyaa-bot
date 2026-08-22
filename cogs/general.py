@@ -6,19 +6,17 @@ from discord import app_commands
 from discord.ext import commands
 
 # ==================== 設定區 ====================
-# 身分組按鈕用的表情符號（保持不動）
 STREAM_EMOJI = "<:__:1513843432253296750>"  # 入門飼養員貼圖
 RPG_EMOJI = "<:__:1513843498858844201>"     # RPG 冒險者貼圖
 
 STREAM_ROLE_ID_DEFAULT = 1507194718449307789
 
-# 抽獎按鈕專用的新表情符號
 GIVEAWAY_JOIN_EMOJI = "<:__:1507632132854513714>"  # 參與抽獎按鈕貼圖
 GIVEAWAY_END_EMOJI = "<:__:1507632085286912000>"   # 結束開獎按鈕貼圖
 # ================================================
 
 
-# 1. 雙身分組按鈕介面（維持原本的貼圖）
+# 1. 雙身分組按鈕介面
 class RoleSelectionView(discord.ui.View):
 
     def __init__(self, stream_role_id: int, rpg_role_id: int):
@@ -26,7 +24,6 @@ class RoleSelectionView(discord.ui.View):
         self.stream_role_id = stream_role_id
         self.rpg_role_id = rpg_role_id
 
-        # 入門飼養員按鈕
         btn_stream = discord.ui.Button(
             label="入門飼養員",
             style=discord.ButtonStyle.secondary,
@@ -36,7 +33,6 @@ class RoleSelectionView(discord.ui.View):
         btn_stream.callback = self.toggle_stream_role
         self.add_item(btn_stream)
 
-        # RPG 冒險者按鈕
         btn_rpg = discord.ui.Button(
             label="RPG 冒險者",
             style=discord.ButtonStyle.secondary,
@@ -56,24 +52,30 @@ class RoleSelectionView(discord.ui.View):
         role = interaction.guild.get_role(role_id)
         if not role:
             await interaction.response.send_message(
-                f"❌ 找不到【{role_name}】身分組，請確認身分組 ID 是否正確！",
+                f"❌ 找不到【{role_name}】身分組，請確認身分組 ID 是否正確！\n*(此訊息會在 1 分鐘後自動刪除)*",
                 ephemeral=True,
             )
-            return
-
-        if role in interaction.user.roles:
-            await interaction.user.remove_roles(role)
-            await interaction.response.send_message(
-                f"🗑️ 已為你移除 **{role.name}** 身分組！", ephemeral=True
-            )
         else:
-            await interaction.user.add_roles(role)
-            await interaction.response.send_message(
-                f"🎉 成功領取 **{role.name}** 身分組！", ephemeral=True
-            )
+            if role in interaction.user.roles:
+                await interaction.user.remove_roles(role)
+                await interaction.response.send_message(
+                    f"🗑️ 已為你移除 **{role.name}** 身分組！\n*(此訊息會在 1 分鐘後自動刪除)*", ephemeral=True
+                )
+            else:
+                await interaction.user.add_roles(role)
+                await interaction.response.send_message(
+                    f"🎉 成功領取 **{role.name}** 身分組！\n*(此訊息會在 1 分鐘後自動刪除)*", ephemeral=True
+                )
+        
+        # 統一讓身分組操作的回應在 60 秒後自動刪除
+        await asyncio.sleep(60)
+        try:
+            await interaction.delete_original_response()
+        except discord.HTTPException:
+            pass
 
 
-# 2. 抽獎按鈕介面（支援多個限定身分組）
+# 2. 抽獎按鈕介面
 class GiveawayView(discord.ui.View):
 
     def __init__(self, prize: str, required_role_ids: list):
@@ -82,7 +84,6 @@ class GiveawayView(discord.ui.View):
         self.required_role_ids = required_role_ids
         self.participants = set()
 
-        # 參與抽獎按鈕（使用新的抽獎貼圖）
         btn_join = discord.ui.Button(
             label="點擊參與抽獎",
             style=discord.ButtonStyle.secondary,
@@ -92,7 +93,6 @@ class GiveawayView(discord.ui.View):
         btn_join.callback = self.join_giveaway
         self.add_item(btn_join)
 
-        # 結束並開獎按鈕（管理員用，使用另一個新的抽獎貼圖）
         btn_end = discord.ui.Button(
             label="結束並開獎",
             style=discord.ButtonStyle.danger,
@@ -110,33 +110,55 @@ class GiveawayView(discord.ui.View):
             if not has_permission:
                 role_mentions = "、".join([f"<@&{r_id}>" for r_id in self.required_role_ids])
                 await interaction.response.send_message(
-                    f"❌ 參加此抽獎需要擁有以下其中一個身分組才行喔：\n{role_mentions}",
+                    f"❌ 參加此抽獎需要擁有以下其中一個身分組才行喔：\n{role_mentions}\n*(此訊息會在 1 分鐘後自動刪除)*",
                     ephemeral=True,
                 )
+                await asyncio.sleep(60)
+                try:
+                    await interaction.delete_original_response()
+                except discord.HTTPException:
+                    pass
                 return
 
         if interaction.user.id in self.participants:
             await interaction.response.send_message(
-                "✨ 你已經參加過這次抽獎囉！請耐心等待開獎～", ephemeral=True
+                "✨ 你已經參加過這次抽獎囉！請耐心等待開獎～\n*(此訊息會在 1 分鐘後自動刪除)*", ephemeral=True
             )
         else:
             self.participants.add(interaction.user.id)
             await interaction.response.send_message(
-                f"🎁 成功參與 **{self.prize}** 的抽獎！目前總參與人數：`{len(self.participants)}` 人",
+                f"🎁 成功參與 **{self.prize}** 的抽獎！目前總參與人數：`{len(self.participants)}` 人\n*(此訊息會在 1 分鐘後自動刪除)*",
                 ephemeral=True,
             )
+        
+        # 讓參與抽獎的回應在 60 秒後自動刪除
+        await asyncio.sleep(60)
+        try:
+            await interaction.delete_original_response()
+        except discord.HTTPException:
+            pass
 
     async def end_giveaway(self, interaction: discord.Interaction):
         if not interaction.user.guild_permissions.administrator:
             await interaction.response.send_message(
-                "❌ 只有伺服器管理員才能結束抽獎並開獎！", ephemeral=True
+                "❌ 只有伺服器管理員才能結束抽獎並開獎！\n*(此訊息會在 1 分鐘後自動刪除)*", ephemeral=True
             )
+            await asyncio.sleep(60)
+            try:
+                await interaction.delete_original_response()
+            except discord.HTTPException:
+                pass
             return
 
         if not self.participants:
             await interaction.response.send_message(
-                "❌ 目前沒有任何人參與抽獎，無法開獎！", ephemeral=True
+                "❌ 目前沒有任何人參與抽獎，無法開獎！\n*(此訊息會在 1 分鐘後自動刪除)*", ephemeral=True
             )
+            await asyncio.sleep(60)
+            try:
+                await interaction.delete_original_response()
+            except discord.HTTPException:
+                pass
             return
 
         winner_id = random.choice(list(self.participants))
@@ -164,22 +186,24 @@ class GeneralCog(commands.Cog):
     async def clear(self, interaction: discord.Interaction, amount: int):
         if amount < 1 or amount > 100:
             await interaction.response.send_message(
-                "❌ 請輸入 1 至 100 之間的數量！", ephemeral=True
+                "❌ 請輸入 1 至 100 之間的數量！\n*(此訊息會在 1 分鐘後自動刪除)*", ephemeral=True
             )
+            await asyncio.sleep(60)
+            try:
+                await interaction.delete_original_response()
+            except discord.HTTPException:
+                pass
             return
 
-        # 加上 defer 防止 3 秒超時
         await interaction.response.defer(ephemeral=True)
 
         deleted = await interaction.channel.purge(limit=amount)
         
-        # 發送提示訊息
         msg = await interaction.followup.send(
             f"🧹 已成功清理 `{len(deleted)}` 條訊息！此訊息會在 1 分鐘後自動刪除。",
             ephemeral=True
         )
 
-        # 暫停 60 秒後自動刪除該則提示
         await asyncio.sleep(60)
         try:
             await msg.delete()
@@ -203,7 +227,12 @@ class GeneralCog(commands.Cog):
         clean_rpg_id = re.sub(r"\D", "", rpg_role_id)
 
         if not clean_stream_id or not clean_rpg_id:
-            await interaction.followup.send("❌ 身分組 ID 解析失敗！")
+            msg = await interaction.followup.send("❌ 身分組 ID 解析失敗！*(此訊息會在 1 分鐘後自動刪除)*", ephemeral=True)
+            await asyncio.sleep(60)
+            try:
+                await msg.delete()
+            except discord.NotFound:
+                pass
             return
 
         s_id = int(clean_stream_id)
@@ -213,7 +242,13 @@ class GeneralCog(commands.Cog):
 
         view = RoleSelectionView(stream_role_id=s_id, rpg_role_id=r_id)
         await interaction.channel.send(content=msg_content, view=view)
-        await interaction.followup.send("✅ 身分組領取按鈕面板已成功發送！")
+        
+        msg = await interaction.followup.send("✅ 身分組領取按鈕面板已成功發送！*(此訊息會在 1 分鐘後自動刪除)*", ephemeral=True)
+        await asyncio.sleep(60)
+        try:
+            await msg.delete()
+        except discord.NotFound:
+            pass
 
     @app_commands.command(
         name="giveaway", description="[管理員] 發起一場抽獎活動（指定特定身分組參加）"
@@ -242,13 +277,16 @@ class GeneralCog(commands.Cog):
         await interaction.channel.send(
             content=f"@everyone 準備抽獎啦～", embed=embed, view=view
         )
-        await interaction.response.send_message(
-            "✅ 抽獎活動面板已成功發起！", ephemeral=True
-        )
+        
+        msg = await interaction.followup.send("✅ 抽獎活動面板已成功發起！*(此訊息會在 1 分鐘後自動刪除)*", ephemeral=True)
+        await asyncio.sleep(60)
+        try:
+            await msg.delete()
+        except discord.NotFound:
+            pass
 
 
 async def setup(bot):
     await bot.add_cog(GeneralCog(bot))
-    # 註冊持久化 View，確保重啟後按鈕仍然有效
     bot.add_view(RoleSelectionView(stream_role_id=0, rpg_role_id=0))
     bot.add_view(GiveawayView(prize="None", required_role_ids=[]))
