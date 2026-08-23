@@ -56,7 +56,6 @@ async def on_ready():
         except discord.HTTPException:
             log.exception("同步斜線指令失敗")
 
-    # 優化：將狀態文字改為更符合目前功能的描述
     await bot.change_presence(
         activity=discord.Game(
             name="霓夜的小精靈 v2.0 | 守護狗窩與語音管理中 🐾"
@@ -64,6 +63,29 @@ async def on_ready():
     )
 
     log.info("霓夜的小精靈已上線！帳號：%s", bot.user)
+
+
+# ==================== 全域斜線指令錯誤處理 ====================
+@bot.tree.error
+async def on_app_command_error(
+    interaction: discord.Interaction, error: discord.app_commands.AppCommandError
+):
+    """攔截斜線指令執行時發生的例外，提供親切的提示回饋。"""
+    if isinstance(error, discord.app_commands.MissingPermissions):
+        msg = "❌ 權限不足：你必須是**伺服器管理員**才能使用這個指令！"
+    elif isinstance(error, discord.app_commands.CommandOnCooldown):
+        msg = f"⏳ 指令冷卻中，請在 {error.retry_after:.1f} 秒後再試一次。"
+    else:
+        msg = "❌ 執行指令時發生未預期的錯誤，管理員已收到通知。"
+        log.exception("斜線指令執行發生例外：%s", error)
+
+    try:
+        if interaction.response.is_done():
+            await interaction.followup.send(msg, ephemeral=True)
+        else:
+            await interaction.response.send_message(msg, ephemeral=True)
+    except Exception:
+        log.exception("發送指令錯誤提示訊息失敗")
 
 
 async def main():
