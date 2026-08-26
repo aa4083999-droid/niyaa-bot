@@ -9,7 +9,7 @@ TWITCH_CLIENT_ID = "29eqw6f4o3palij1j02i81lf28jche"  # 你的 Twitch Client ID
 TWITCH_CLIENT_SECRET = "gtzb16b855z89mnev147q452xlpxpi"  # 貼上你的 Twitch Client Secret
 TWITCH_CHANNEL_NAME = "niyaa0123"  # 主播 Twitch 帳號
 
-ANNOUNCE_CHANNEL_ID = 1507591638904471603  # 貼上 Discord 公告頻道 ID
+ANNOUNCE_CHANNEL_ID = 1507590474599235656  # 貼上 Discord 公告頻道 ID
 # ============================================================
 
 
