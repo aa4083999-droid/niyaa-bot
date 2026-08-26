@@ -6,34 +6,23 @@ from discord.ext import commands, tasks
 
 # ==================== 設定區 (請修改這裡) ====================
 TWITCH_CLIENT_ID = "29eqw6f4o3palij1j02i81lf28jche"  # 你的 Twitch Client ID
-TWITCH_CLIENT_SECRET = "ks7hcha13daaoap5pj2v3t7j5hrdow"  # 貼上你的 Twitch Client Secret
+TWITCH_CLIENT_SECRET = "gtzb16b855z89mnev147q452xlpxpi"  # 你的 Twitch Client Secret
 TWITCH_CHANNEL_NAME = "niyaa0123"  # 主播 Twitch 帳號
 
-ANNOUNCE_CHANNEL_ID = 1507590474599235656  # 貼上 Discord 公告頻道 ID
+ANNOUNCE_CHANNEL_ID = 1507590474599235656  # Discord 公告頻道 ID
 # ============================================================
 
 
-# 建立底部按鈕介面（對應圖片最下方的按鈕風格）
+# 仿照 Streamcord 風格的底部按鈕
 class StreamView(discord.ui.View):
 
     def __init__(self, channel_name):
         super().__init__(timeout=None)
         stream_url = f"https://www.twitch.tv/{channel_name}"
-        # 第一個按鈕：前往 Twitch 直播
         self.add_item(
             discord.ui.Button(
-                label="前往 Twitch 頻道",
+                label="Watch Stream",
                 url=stream_url,
-                emoji="🔴",
-                style=discord.ButtonStyle.link,
-            )
-        )
-        # 第二個按鈕：Discord 連結（可自行更換）
-        self.add_item(
-            discord.ui.Button(
-                label="加入霓夜的社群",
-                url="https://discord.gg/你的邀請連結",
-                emoji="💬",
                 style=discord.ButtonStyle.link,
             )
         )
@@ -45,7 +34,7 @@ class StreamCog(commands.Cog):
         self.bot = bot
         self.access_token = None
         self.is_live = False
-        self.last_msg_id = None  # 記錄已發送的開台卡片 ID，用來做即時編輯
+        self.last_msg_id = None  # 記錄開台訊息 ID，用來做動態更新
         self.check_twitch_live.start()
 
     def cog_unload(self):
@@ -64,7 +53,7 @@ class StreamCog(commands.Cog):
                     data = await resp.json()
                     self.access_token = data.get("access_token")
 
-    @tasks.loop(minutes=1.5)  # 每 90 秒自動向 Twitch 抓取最新數據
+    @tasks.loop(minutes=1.5)  # 每 90 秒檢查一次 Twitch 直播狀態
     async def check_twitch_live(self):
         if not TWITCH_CLIENT_ID or TWITCH_CLIENT_ID == "YOUR_TWITCH_CLIENT_ID":
             return
@@ -77,6 +66,7 @@ class StreamCog(commands.Cog):
             "Client-ID": TWITCH_CLIENT_ID,
             "Authorization": f"Bearer {self.access_token}",
         }
+        user_url = f"https://api.twitch.tv/helix/users?login={TWITCH_CHANNEL_NAME}"
 
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=headers) as resp:
@@ -88,14 +78,23 @@ class StreamCog(commands.Cog):
                     data = await resp.json()
                     streams = data.get("data", [])
 
-                    # 1. 剛剛開台：發送新公告卡片
+                    # 取得用戶頭貼
+                    avatar_url = None
+                    async with session.get(user_url, headers=headers) as user_resp:
+                        if user_resp.status == 200:
+                            user_data = await user_resp.json()
+                            users = user_data.get("data", [])
+                            if users:
+                                avatar_url = users[0].get("profile_image_url")
+
+                    # 1. 剛剛開台：發送新公告
                     if streams and not self.is_live:
                         self.is_live = True
-                        await self.send_stream_notice(streams[0])
+                        await self.send_stream_notice(streams[0], avatar_url)
 
-                    # 2. 持續開台中：動態編輯舊卡片，即時更新人數、分類與開台時長
+                    # 2. 持續開台中：即時更新數據與預覽圖
                     elif streams and self.is_live:
-                        await self.update_stream_notice(streams[0])
+                        await self.update_stream_notice(streams[0], avatar_url)
 
                     # 3. 關台：將卡片轉為灰色停播狀態
                     elif not streams and self.is_live:
@@ -106,44 +105,48 @@ class StreamCog(commands.Cog):
     async def before_check(self):
         await self.bot.wait_until_ready()
 
-    # 發送全新的開台通知卡片
-    async def send_stream_notice(self, stream_data):
+    # 發送全新的開台通知
+    async def send_stream_notice(self, stream_data, avatar_url):
         channel = self.bot.get_channel(ANNOUNCE_CHANNEL_ID)
         if not channel:
             return
 
-        embed = self.build_embed(stream_data)
+        embed = self.build_embed(stream_data, avatar_url)
         view = StreamView(TWITCH_CHANNEL_NAME)
         stream_url = f"https://www.twitch.tv/{TWITCH_CHANNEL_NAME}"
 
         msg = await channel.send(
-            content=f"@everyone\n準備狗叫啦~ {stream_url}", embed=embed, view=view
+            content=f"@everyone\n準備狗叫啦~\n{stream_url}", embed=embed, view=view
         )
         self.last_msg_id = msg.id
 
-    # 動態更新舊卡片（編輯人數、分類與時長）
-    async def update_stream_notice(self, stream_data):
+    # ✅ 修正 1：即時更新舊卡片數據，若訊息被刪除則重發
+    async def update_stream_notice(self, stream_data, avatar_url):
         channel = self.bot.get_channel(ANNOUNCE_CHANNEL_ID)
         if not channel or not self.last_msg_id:
             return
 
         try:
             msg = await channel.fetch_message(self.last_msg_id)
-            new_embed = self.build_embed(stream_data)
+            new_embed = self.build_embed(stream_data, avatar_url)
             view = StreamView(TWITCH_CHANNEL_NAME)
             await msg.edit(embed=new_embed, view=view)
-        except Exception:
-            pass  # 若訊息被手動刪除則忽略錯誤
+        except discord.NotFound:
+            # 訊息被刪除了，重置狀態並重新發送
+            self.is_live = False
+            self.last_msg_id = None
+            await self.send_stream_notice(stream_data, avatar_url)
+        except Exception as e:
+            print(f"更新失敗: {e}")
 
-    # 封裝 Embed 卡片：完美移植 FiveM 狀態面板外觀，但內容改為 Twitch 數據
-    def build_embed(self, stream_data):
+    # 建立結合精緻面板與防快取預覽圖的卡片
+    def build_embed(self, stream_data, avatar_url):
         title = stream_data.get("title", "霓夜開台囉！")
         game = stream_data.get("game_name", "未指定分類")
         viewers = stream_data.get("viewer_count", 0)
         started_at_str = stream_data.get("started_at")
         stream_url = f"https://www.twitch.tv/{TWITCH_CHANNEL_NAME}"
-        thumb_url = f"https://static-cdn.jtvnw.net/previews-img/live_user_{TWITCH_CHANNEL_NAME}-1280x720.jpg"
-
+        
         # 計算開台時長
         duration_str = "`0 hrs, 0 min`"
         if started_at_str:
@@ -157,64 +160,63 @@ class StreamCog(commands.Cog):
             minutes = int((duration_delta.total_seconds() % 3600) // 60)
             duration_str = f"{hours} hrs, {minutes} mins"
 
+        # 使用加入時間戳記的穩定縮圖 URL 方案，避免 Discord 圖片快取不更新
+        timestamp = int(datetime.datetime.now().timestamp())
+        thumb_url = f"https://static-cdn.jtvnw.net/previews-img/live_user_{TWITCH_CHANNEL_NAME}-1280x720.jpg?t={timestamp}"
+
         embed = discord.Embed(
             title="🌴 霓夜台 | 直播即時狀態",
             description=(
                 f"歡迎來到霓夜的直播間！\n"
-                f"**目前直播標題**：{title}\n"
+                f"**目前直播標題**：[{title}]({stream_url})\n"
                 f"若有問題請在 Discord 反映"
             ),
             color=discord.Color.from_rgb(100, 65, 165),  # Twitch 紫色邊條
         )
 
-        # 右上角小頭貼
-        embed.set_thumbnail(url=thumb_url)
+        # 頂部作者列：顯示主播頭貼與 is now live on Twitch!
+        if avatar_url:
+            embed.set_author(name=f"{TWITCH_CHANNEL_NAME} is now live on Twitch!", icon_url=avatar_url)
+        else:
+            embed.set_author(name=f"{TWITCH_CHANNEL_NAME} is now live on Twitch!")
 
-        # 仿造 FiveM 狀態面板的欄位配對
-        embed.add_field(
-            name="狀態", value="`🟢 正在直播中...`", inline=True
-        )
-        embed.add_field(
-            name="線上觀眾", value=f"`{viewers} 人線上`", inline=True
-        )
-
-        embed.add_field(
-            name="一鍵前往直播 (URL)",
-            value=f"[`click to watch`]({stream_url})",
-            inline=False,
-        )
+        # 狀態面板欄位排版
+        embed.add_field(name="狀態", value="`🟢 正在直播中...`", inline=True)
+        embed.add_field(name="線上觀眾", value=f"`{viewers} 人線上`", inline=True)
 
         embed.add_field(name="遊戲分類", value=f"`{game}`", inline=True)
         embed.add_field(name="開台時長", value=f"`{duration_str}`", inline=True)
 
-        # 正下方大預覽圖
+        # 正下方大張直播預覽畫面
         embed.set_image(url=thumb_url)
 
-        embed.set_footer(
-            text=f"Streamcord 8.1.1 • Updated every minute • {datetime.datetime.now().strftime('%p %I:%M')}"
-        )
+        embed.set_footer(text=f"streamcord.io • Updated every minute • {datetime.datetime.now().strftime('%p %I:%M')}")
         return embed
 
-    # 關台時自動更新卡片狀態
+    # ✅ 修正 2：關台時改用新建 Embed 的安全方式更新
     async def handle_stream_offline(self):
         channel = self.bot.get_channel(ANNOUNCE_CHANNEL_ID)
         if channel and self.last_msg_id:
             try:
                 msg = await channel.fetch_message(self.last_msg_id)
-                embed = msg.embeds[0]
-                embed.title = "🌴 霓夜台 | 直播已結束"
-                embed.description = "⚫ **直播已關閉，感謝大家的陪伴！**"
-                embed.color = discord.Color.dark_gray()
-                embed.clear_fields()
+                
+                # 新建 embed 而不是修改舊的，避免屬性殘留與報錯
+                embed = discord.Embed(
+                    title="🌴 霓夜台 | 直播已結束",
+                    description="⚫ **直播已關閉，感謝大家的陪伴！**",
+                    color=discord.Color.dark_gray(),
+                )
+                embed.set_footer(text=f"streamcord.io • {datetime.datetime.now().strftime('%p %I:%M')}")
+                
                 await msg.edit(
                     content="💤 **霓夜已關台**", embed=embed, view=None
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"關台更新失敗: {e}")
 
     # 管理員測試指令
     @app_commands.command(
-        name="test_stream", description="測試的開台通知"
+        name="test_stream", description="測試開台通知卡片"
     )
     @app_commands.checks.has_permissions(administrator=True)
     async def test_stream(self, interaction: discord.Interaction):
@@ -228,42 +230,38 @@ class StreamCog(commands.Cog):
             return
 
         stream_url = f"https://www.twitch.tv/{TWITCH_CHANNEL_NAME}"
-        thumb_url = f"https://static-cdn.jtvnw.net/previews-img/live_user_{TWITCH_CHANNEL_NAME}-1280x720.jpg"
+        timestamp = int(datetime.datetime.now().timestamp())
+        thumb_url = f"https://static-cdn.jtvnw.net/previews-img/live_user_{TWITCH_CHANNEL_NAME}-1280x720.jpg?t={timestamp}"
 
         embed = discord.Embed(
             title="🌴 霓夜台 | 直播即時狀態",
             description=(
                 f"歡迎來到霓夜的直播間！\n"
-                f"**目前直播標題**：[【測試】今天來跟大家聊天玩遊戲！]({stream_url})\n"
+                f"**目前直播標題**：[[霓夜Niya]0825 | 休假也好累 【歡迎追蹤|200追有抽獎|記得開5%🔊唷】]({stream_url})\n"
                 f"若有問題請在 Discord 反映"
             ),
             color=discord.Color.from_rgb(100, 65, 165),
         )
-        embed.set_thumbnail(url=thumb_url)
-        embed.add_field(
-            name="狀態", value="`🟢 正在直播中...`", inline=True
-        )
+        embed.set_author(name=f"{TWITCH_CHANNEL_NAME} is now live on Twitch!")
+        
+        embed.add_field(name="狀態", value="`🟢 正在直播中...`", inline=True)
         embed.add_field(name="線上觀眾", value="`100 人線上`", inline=True)
-        embed.add_field(
-            name="一鍵前往直播 (URL)",
-            value=f"[`click to watch`]({stream_url})",
-            inline=False,
-        )
-        embed.add_field(name="遊戲分類", value="`Just Chatting`", inline=True)
+        embed.add_field(name="遊戲分類", value="`VALORANT`", inline=True)
         embed.add_field(name="開台時長", value="`1 hrs, 15 mins`", inline=True)
+
         embed.set_image(url=thumb_url)
-        embed.set_footer(
-            text=f"Streamcord 8.1.1 • Updated every minute • {datetime.datetime.now().strftime('%p %I:%M')}"
-        )
+        embed.set_footer(text=f"streamcord.io • Updated every minute • {datetime.datetime.now().strftime('%p %I:%M')}")
 
         view = StreamView(TWITCH_CHANNEL_NAME)
         await channel.send(
-            content=f"@everyone\n準備狗叫啦~ {stream_url}", embed=embed, view=view
+            content=f"@everyone\n準備狗叫啦~\n{stream_url}", embed=embed, view=view
         )
         await interaction.followup.send(
-            "✅ Twitch 測試卡片發送成功！"
+            "✅ 測試卡片發送成功！"
         )
 
 
+async def setup(bot):
+    await bot.add_cog(StreamCog(bot))
 async def setup(bot):
     await bot.add_cog(StreamCog(bot))
