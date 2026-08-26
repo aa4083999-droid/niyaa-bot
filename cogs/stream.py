@@ -9,7 +9,7 @@ TWITCH_CLIENT_ID = "29eqw6f4o3palij1j02i81lf28jche"  # 你的 Twitch Client ID
 TWITCH_CLIENT_SECRET = "gtzb16b855z89mnev147q452xlpxpi"  # 你的 Twitch Client Secret
 TWITCH_CHANNEL_NAME = "niyaa0123"  # 主播 Twitch 帳號
 
-ANNOUNCE_CHANNEL_ID = 1507590474599235656  # Discord 公告頻道 ID
+ANNOUNCE_CHANNEL_ID = 1507591638904471603  # Discord 公告頻道 ID
 # ============================================================
 
 
@@ -87,6 +87,22 @@ class StreamCog(commands.Cog):
                             if users:
                                 avatar_url = users[0].get("profile_image_url")
 
+                    if streams:
+                        # 🌟 智慧防護：檢查 Twitch 預覽圖是否存在 (避免 404 導致手機/電腦破圖)
+                        timestamp = int(datetime.datetime.now().timestamp())
+                        raw_thumb_url = f"https://static-cdn.jtvnw.net/previews-img/live_user_{TWITCH_CHANNEL_NAME}-1280x720.jpg"
+                        
+                        try:
+                            async with session.head(raw_thumb_url) as thumb_resp:
+                                if thumb_resp.status == 200:
+                                    final_thumb_url = f"{raw_thumb_url}?t={timestamp}"
+                                else:
+                                    final_thumb_url = avatar_url
+                        except Exception:
+                            final_thumb_url = avatar_url
+
+                        streams[0]["safe_thumb_url"] = final_thumb_url
+
                     # 1. 剛剛開台：發送新公告
                     if streams and not self.is_live:
                         self.is_live = True
@@ -120,7 +136,7 @@ class StreamCog(commands.Cog):
         )
         self.last_msg_id = msg.id
 
-    # ✅ 修正 1：即時更新舊卡片數據，若訊息被刪除則重發
+    # 即時更新舊卡片數據
     async def update_stream_notice(self, stream_data, avatar_url):
         channel = self.bot.get_channel(ANNOUNCE_CHANNEL_ID)
         if not channel or not self.last_msg_id:
@@ -132,14 +148,13 @@ class StreamCog(commands.Cog):
             view = StreamView(TWITCH_CHANNEL_NAME)
             await msg.edit(embed=new_embed, view=view)
         except discord.NotFound:
-            # 訊息被刪除了，重置狀態並重新發送
             self.is_live = False
             self.last_msg_id = None
             await self.send_stream_notice(stream_data, avatar_url)
         except Exception as e:
             print(f"更新失敗: {e}")
 
-    # 建立結合精緻面板與防快取預覽圖的卡片
+    # 建立結合精緻面板與安全預覽圖的卡片
     def build_embed(self, stream_data, avatar_url):
         title = stream_data.get("title", "霓夜開台囉！")
         game = stream_data.get("game_name", "未指定分類")
@@ -160,10 +175,6 @@ class StreamCog(commands.Cog):
             minutes = int((duration_delta.total_seconds() % 3600) // 60)
             duration_str = f"{hours} hrs, {minutes} mins"
 
-        # 使用加入時間戳記的穩定縮圖 URL 方案，避免 Discord 圖片快取不更新
-        timestamp = int(datetime.datetime.now().timestamp())
-        thumb_url = f"https://static-cdn.jtvnw.net/previews-img/live_user_{TWITCH_CHANNEL_NAME}-1280x720.jpg?t={timestamp}"
-
         embed = discord.Embed(
             title="🌴 霓夜台 | 直播即時狀態",
             description=(
@@ -174,7 +185,7 @@ class StreamCog(commands.Cog):
             color=discord.Color.from_rgb(100, 65, 165),  # Twitch 紫色邊條
         )
 
-        # 頂部作者列：顯示主播頭貼與 is now live on Twitch!
+        # 頂部作者列：顯示主播頭貼
         if avatar_url:
             embed.set_author(name=f"{TWITCH_CHANNEL_NAME} is now live on Twitch!", icon_url=avatar_url)
         else:
@@ -183,38 +194,36 @@ class StreamCog(commands.Cog):
         # 狀態面板欄位排版
         embed.add_field(name="狀態", value="`🟢 正在直播中...`", inline=True)
         embed.add_field(name="線上觀眾", value=f"`{viewers} 人線上`", inline=True)
-
         embed.add_field(name="遊戲分類", value=f"`{game}`", inline=True)
         embed.add_field(name="開台時長", value=f"`{duration_str}`", inline=True)
 
-        # 正下方大張直播預覽畫面
-        embed.set_image(url=thumb_url)
+        # 採用安全的圖片來源
+        thumb_url = stream_data.get("safe_thumb_url", avatar_url)
+        if thumb_url:
+            embed.set_image(url=thumb_url)
 
         embed.set_footer(text=f"streamcord.io • Updated every minute • {datetime.datetime.now().strftime('%p %I:%M')}")
         return embed
 
-    # ✅ 修正 2：關台時改用新建 Embed 的安全方式更新
+    # 關台時更新
     async def handle_stream_offline(self):
         channel = self.bot.get_channel(ANNOUNCE_CHANNEL_ID)
         if channel and self.last_msg_id:
             try:
                 msg = await channel.fetch_message(self.last_msg_id)
-                
-                # 新建 embed 而不是修改舊的，避免屬性殘留與報錯
                 embed = discord.Embed(
                     title="🌴 霓夜台 | 直播已結束",
                     description="⚫ **直播已關閉，感謝大家的陪伴！**",
                     color=discord.Color.dark_gray(),
                 )
                 embed.set_footer(text=f"streamcord.io • {datetime.datetime.now().strftime('%p %I:%M')}")
-                
                 await msg.edit(
                     content="💤 **霓夜已關台**", embed=embed, view=None
                 )
             except Exception as e:
                 print(f"關台更新失敗: {e}")
 
-    # 管理員測試指令
+    # 管理員測試指令（已加入智慧檢查）
     @app_commands.command(
         name="test_stream", description="測試開台通知卡片"
     )
@@ -231,7 +240,17 @@ class StreamCog(commands.Cog):
 
         stream_url = f"https://www.twitch.tv/{TWITCH_CHANNEL_NAME}"
         timestamp = int(datetime.datetime.now().timestamp())
-        thumb_url = f"https://static-cdn.jtvnw.net/previews-img/live_user_{TWITCH_CHANNEL_NAME}-1280x720.jpg?t={timestamp}"
+        raw_thumb_url = f"https://static-cdn.jtvnw.net/previews-img/live_user_{TWITCH_CHANNEL_NAME}-1280x720.jpg"
+        
+        # 📌 測試指令也加入智慧 HEAD 檢查
+        thumb_url = None
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.head(raw_thumb_url) as resp:
+                    if resp.status == 200:
+                        thumb_url = f"{raw_thumb_url}?t={timestamp}"
+        except Exception:
+            pass
 
         embed = discord.Embed(
             title="🌴 霓夜台 | 直播即時狀態",
@@ -249,7 +268,9 @@ class StreamCog(commands.Cog):
         embed.add_field(name="遊戲分類", value="`VALORANT`", inline=True)
         embed.add_field(name="開台時長", value="`1 hrs, 15 mins`", inline=True)
 
-        embed.set_image(url=thumb_url)
+        if thumb_url:
+            embed.set_image(url=thumb_url)
+
         embed.set_footer(text=f"streamcord.io • Updated every minute • {datetime.datetime.now().strftime('%p %I:%M')}")
 
         view = StreamView(TWITCH_CHANNEL_NAME)
@@ -261,7 +282,5 @@ class StreamCog(commands.Cog):
         )
 
 
-async def setup(bot):
-    await bot.add_cog(StreamCog(bot))
 async def setup(bot):
     await bot.add_cog(StreamCog(bot))
