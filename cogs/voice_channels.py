@@ -14,9 +14,9 @@ REST_CHANNEL_ID = 1517983383052091523
 
 # 設定：3 秒輪詢，30 分鐘靜音門檻
 MUTE_CHECK_INTERVAL = 3.0
-MUTE_TIMEOUT = 30 * 60.0
+MUTE_TIMEOUT = 10.0
 # 移動失敗時的重試冷卻時間（60 秒，避免每 3 秒連續轟炸 API）
-MOVE_RETRY_COOLDOWN = 60.0
+MOVE_RETRY_COOLDOWN = 15.0
 
 TEMP_CHANNEL_PREFIX = "🔊 "
 DATA_FILE = "data/temp_voice_channels.json"
