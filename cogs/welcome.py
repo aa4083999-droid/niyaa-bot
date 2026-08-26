@@ -11,7 +11,7 @@ from PIL import Image, ImageDraw, ImageFont
 logger = logging.getLogger("discord_bot.welcome")
 
 # ==================== 設定區 ====================
-WELCOME_CHANNEL_ID = 1507590474599235656  # 你的歡迎頻道 ID
+WELCOME_CHANNEL_ID = 1506072169145307339  # 你的歡迎頻道 ID
 DOG_BG_IMAGE_FILENAME = "welcome_background.jpg"
 FONT_FILENAME = "font.ttc"
 # ================================================
