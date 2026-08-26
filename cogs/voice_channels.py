@@ -16,7 +16,7 @@ REST_CHANNEL_ID = 1517983383052091523
 
 # 設定：3 秒輪詢，30 分鐘靜音門檻（正式版設定）
 MUTE_CHECK_INTERVAL = 3.0
-MUTE_TIMEOUT = 10.0
+MUTE_TIMEOUT = 30.0 * 60.0  # 30 分鐘
 # 移動/刪除失敗時的重試冷卻時間（15 秒）
 RETRY_COOLDOWN = 15.0
 
