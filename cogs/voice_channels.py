@@ -86,18 +86,18 @@ class TempVoiceCog(commands.Cog):
 
     def _save_sync(self, channel_ids_list: list[int]):
         """在背景執行緒中透過暫存檔安全寫入資料，避免阻塞主迴圈"""
+        temp_name = None
         try:
             self._ensure_data_dir()
             dir_name = os.path.dirname(DATA_FILE)
-            # 建立同目錄下的暫存檔，確保 atomic replace
             with tempfile.NamedTemporaryFile("w", dir=dir_name, delete=False, encoding="utf-8") as tf:
                 json.dump(channel_ids_list, tf, ensure_ascii=False, indent=2)
                 temp_name = tf.name
             os.replace(temp_name, DATA_FILE)
         except Exception:
             log.exception("儲存暫存頻道持久化檔案失敗")
-            # 若發生例外嘗試清理暫存檔
-            if 'temp_name' in locals() and os.path.exists(temp_name):
+        finally:
+            if temp_name and os.path.exists(temp_name):
                 try:
                     os.remove(temp_name)
                 except Exception:
@@ -189,7 +189,6 @@ class TempVoiceCog(commands.Cog):
         self._creating_for.add(key)
 
         async with self._create_lock:
-            # 再次確認成員是否還在觸發頻道內
             if (
                 member.voice is None
                 or member.voice.channel != trigger_channel
@@ -228,7 +227,6 @@ class TempVoiceCog(commands.Cog):
             finally:
                 self._creating_for.discard(key)
 
-                # 若建立後成員未能成功移動，作為防護清理孤兒頻道
                 if new_channel is not None and (
                     member.voice is None
                     or member.voice.channel != new_channel
@@ -253,10 +251,8 @@ class TempVoiceCog(commands.Cog):
         channel: discord.VoiceChannel,
     ):
         async with self._delete_lock:
-            # 短暫延遲防抖，確保成員完全離開狀態穩定
             await asyncio.sleep(0.5)
 
-            # 重新取得最新頻道物件或檢查成員
             if (
                 channel.id not in self.temp_channel_ids
                 or len(channel.members) > 0
@@ -275,116 +271,98 @@ class TempVoiceCog(commands.Cog):
                 self.temp_channel_ids.discard(channel.id)
                 await self._save_persisted_channels()
             except discord.NotFound:
-                # 頻道早已不存在，直接從追蹤中移除
-                log.warning("嘗試刪除臨時語音頻道時發現頻道已不存在 (NotFound)：%s", channel.id)
                 self.temp_channel_ids.discard(channel.id)
                 await self._save_persisted_channels()
             except discord.Forbidden:
-                log.error("刪除臨時語音頻道失敗：權限不足 (%s)，保留追蹤稍後重試", channel.id)
+                log.error("刪除臨時語音頻道失敗：權限不足 (%s)", channel.id)
             except discord.HTTPException:
-                log.exception("刪除臨時語音頻道失敗：%s，保留追蹤稍後重試", channel.id)
+                log.exception("刪除臨時語音頻道失敗：%s", channel.id)
 
     @tasks.loop(seconds=MUTE_CHECK_INTERVAL)
     async def check_afk_loop(self):
         now = time.monotonic()
         active_keys: set[tuple[int, int]] = set()
-        
-        # 追蹤本輪發現失效（已被手動刪除）的暫存頻道 ID
         stale_channel_ids: set[int] = set()
 
-        for guild in self.bot.guilds:
-            rest_channel = guild.get_channel(REST_CHANNEL_ID)
-
-            # 針對目前記憶體中屬於該 guild 的暫存頻道進行檢查
-            guild_temp_ids = [cid for cid in self.temp_channel_ids if guild.get_channel(cid) is not None or guild.get_channel(cid) is False]
+        # 直接透過快取 ID 檢查，效能更好
+        for cid in list(self.temp_channel_ids):
+            ch = self.bot.get_channel(cid)
             
-            # 建立一個內部集合用來過濾
-            for cid in list(self.temp_channel_ids):
-                ch = guild.get_channel(cid)
-                if ch is not None:
-                    if not isinstance(ch, discord.VoiceChannel):
-                        continue
-                    # 補充檢查：若空了順便清理（防堵漏掉的離開事件）
-                    if len(ch.members) == 0:
-                        asyncio.create_task(self._delete_if_empty(ch))
+            if ch is None or not isinstance(ch, discord.VoiceChannel):
+                stale_channel_ids.add(cid)
+                continue
+
+            # 若空了順便清理
+            if len(ch.members) == 0:
+                asyncio.create_task(self._delete_if_empty(ch))
+                continue
+
+            rest_channel = ch.guild.get_channel(REST_CHANNEL_ID)
+
+            for member in ch.members:
+                try:
+                    voice_state = member.voice
+                    key = self._mute_key(member)
+
+                    if (
+                        voice_state is None
+                        or voice_state.channel != ch
+                    ):
+                        self.mute_started_at.pop(key, None)
+                        self.move_failed_at.pop(key, None)
                         continue
 
-                    # 檢查頻道成員靜音狀態
-                    for member in ch.members:
+                    is_muted = voice_state.self_mute or voice_state.mute
+
+                    if not is_muted:
+                        self.mute_started_at.pop(key, None)
+                        self.move_failed_at.pop(key, None)
+                        continue
+
+                    active_keys.add(key)
+                    self.mute_started_at.setdefault(key, now)
+                    started_at = self.mute_started_at[key]
+
+                    if now - started_at < MUTE_TIMEOUT:
+                        continue
+
+                    last_fail = self.move_failed_at.get(key, 0.0)
+                    if now - last_fail < MOVE_RETRY_COOLDOWN:
+                        continue
+
+                    if not isinstance(rest_channel, discord.VoiceChannel):
+                        continue
+
+                    if (
+                        member.voice
+                        and member.voice.channel == ch
+                        and (member.voice.self_mute or member.voice.mute)
+                    ):
                         try:
-                            voice_state = member.voice
-                            key = self._mute_key(member)
-
-                            if (
-                                voice_state is None
-                                or voice_state.channel != ch
-                            ):
-                                self.mute_started_at.pop(key, None)
-                                self.move_failed_at.pop(key, None)
-                                continue
-
-                            is_muted = voice_state.self_mute or voice_state.mute
-
-                            if not is_muted:
-                                self.mute_started_at.pop(key, None)
-                                self.move_failed_at.pop(key, None)
-                                continue
-
-                            active_keys.add(key)
-                            self.mute_started_at.setdefault(key, now)
-                            started_at = self.mute_started_at[key]
-
-                            if now - started_at < MUTE_TIMEOUT:
-                                continue
-
-                            # 檢查是否處於移動失敗的冷卻期內
-                            last_fail = self.move_failed_at.get(key, 0.0)
-                            if now - last_fail < MOVE_RETRY_COOLDOWN:
-                                continue
-
-                            if not isinstance(rest_channel, discord.VoiceChannel):
-                                continue
-
-                            # 再次確認狀態後執行移動
-                            if (
-                                member.voice
-                                and member.voice.channel == ch
-                                and (member.voice.self_mute or member.voice.mute)
-                            ):
-                                try:
-                                    await member.move_to(
-                                        rest_channel,
-                                        reason="在臨時語音頻道靜音過久，自動移至休息區",
-                                    )
-                                    log.info("已將長時間靜音成員 %s 移至休息區", member)
-                                    # 移動成功後才清除計時器與失敗紀錄
-                                    self.mute_started_at.pop(key, None)
-                                    self.move_failed_at.pop(key, None)
-                                except (discord.Forbidden, discord.HTTPException):
-                                    # 記錄失敗時間，進入冷卻期
-                                    self.move_failed_at[key] = now
-                                    raise
-
-                        except discord.Forbidden:
-                            log.error("移動 %s 至休息區時權限不足（已進入冷卻）", member)
-                        except discord.HTTPException:
-                            log.exception(
-                                "移動 %s 至休息區時發生 Discord API 錯誤（已進入冷卻）", member
+                            await member.move_to(
+                                rest_channel,
+                                reason="在臨時語音頻道靜音過久，自動移至休息區",
                             )
-                        except Exception:
-                            log.exception("檢核成員 AFK 狀態時發生未預期錯誤")
-                else:
-                    # 頻道在 Discord 中已經找不到（被手動刪除）
-                    stale_channel_ids.add(cid)
+                            log.info("已將長時間靜音成員 %s 移至休息區", member)
+                            self.mute_started_at.pop(key, None)
+                            self.move_failed_at.pop(key, None)
+                        except (discord.Forbidden, discord.HTTPException):
+                            self.move_failed_at[key] = now
+                            raise
 
-        # 清理在迴圈中發現已失效的頻道 ID
+                except discord.Forbidden:
+                    log.error("移動 %s 至休息區時權限不足", member)
+                except discord.HTTPException:
+                    log.exception("移動 %s 至休息區時發生 API 錯誤", member)
+                except Exception:
+                    log.exception("檢核成員 AFK 狀態時發生未預期錯誤")
+
         if stale_channel_ids:
             for cid in stale_channel_ids:
-                log.warning("偵測到暫存頻道 %s 已在 Discord 中被刪除，自動清除追蹤。", cid)
+                log.warning("偵測到暫存頻道 %s 已失效，自動清除追蹤。", cid)
                 self.temp_channel_ids.discard(cid)
             await self._save_persisted_channels()
 
-        # 清理已不在暫存頻道內或不再靜音的快取資料
         stale_keys = set(self.mute_started_at) - active_keys
         for key in stale_keys:
             self.mute_started_at.pop(key, None)
@@ -398,13 +376,11 @@ class TempVoiceCog(commands.Cog):
     async def before_check_afk_loop(self):
         await self.bot.wait_until_ready()
 
-        # 啟動時清理已不存在 Discord 伺服器中的暫存頻道 ID (防止機器人重啟後殘留)
         valid_ids = set()
         for guild in self.bot.guilds:
             for channel in guild.voice_channels:
                 if channel.id in self.temp_channel_ids:
                     valid_ids.add(channel.id)
-                    # 同時順便檢查重啟時如果頻道剛好是空的，直接清理掉
                     if len(channel.members) == 0:
                         asyncio.create_task(self._delete_if_empty(channel))
 
@@ -413,7 +389,6 @@ class TempVoiceCog(commands.Cog):
             self.temp_channel_ids = valid_ids
             await self._save_persisted_channels()
 
-        # 驗證休息區頻道
         rest_channel = self.bot.get_channel(REST_CHANNEL_ID)
         if not isinstance(rest_channel, discord.VoiceChannel):
             log.warning(
