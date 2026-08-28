@@ -50,10 +50,14 @@ class StreamCog(commands.Cog):
                 if resp.status == 200:
                     data = await resp.json()
                     self.access_token = data.get("access_token")
+                    print(f"✅ [Token] 成功獲取 Twitch 訪問令牌")
+                else:
+                    print(f"❌ [Token] 獲取失敗: {resp.status}")
 
     @tasks.loop(minutes=1.5)  # 每 90 秒檢查一次 Twitch 直播狀態
     async def check_twitch_live(self):
         if not TWITCH_CLIENT_ID or TWITCH_CLIENT_ID == "YOUR_TWITCH_CLIENT_ID":
+            print("⚠️ [Check] 請先設定 TWITCH_CLIENT_ID")
             return
 
         if not self.access_token:
@@ -69,6 +73,7 @@ class StreamCog(commands.Cog):
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=headers) as resp:
                 if resp.status == 401:
+                    print("⚠️ [Check] Token 過期，重新獲取...")
                     await self.get_twitch_token()
                     return
 
@@ -93,43 +98,56 @@ class StreamCog(commands.Cog):
                         if thumbnail_url:
                             base_thumb_url = thumbnail_url.replace("{width}", "1280").replace("{height}", "720")
                             final_thumb_url = f"{base_thumb_url}?t={timestamp}"
+                            print(f"📸 [Check] 使用 API 圖片: {base_thumb_url[:60]}...")
                         else:
                             final_thumb_url = f"https://static-cdn.jtvnw.net/previews-img/live_user_{TWITCH_CHANNEL_NAME.lower()}-1280x720.jpg?t={timestamp}"
+                            print(f"⚙️ [Check] 使用備援 URL")
 
                         streams[0]["safe_thumb_url"] = final_thumb_url
 
                     # 1. 剛剛開台：發送新公告
                     if streams and not self.is_live:
                         self.is_live = True
+                        print(f"🎬 [Check] 開台偵測！正在發送通知...")
                         await self.send_stream_notice(streams[0], avatar_url)
 
                     # 2. 持續開台中：即時更新數據與預覽圖
                     elif streams and self.is_live:
+                        print(f"🔄 [Check] 直播進行中，更新卡片...")
                         await self.update_stream_notice(streams[0], avatar_url)
 
                     # 3. 關台：將卡片轉為灰色停播狀態
                     elif not streams and self.is_live:
                         self.is_live = False
+                        print(f"🔴 [Check] 直播關閉偵測，更新卡片...")
                         await self.handle_stream_offline()
+                else:
+                    print(f"❌ [Check] API 錯誤: {resp.status}")
 
     @check_twitch_live.before_loop
     async def before_check(self):
         await self.bot.wait_until_ready()
+        print("✅ [Ready] Bot 已就緒，開始監控 Twitch...")
 
     # 發送全新的開台通知
     async def send_stream_notice(self, stream_data, avatar_url):
         channel = self.bot.get_channel(ANNOUNCE_CHANNEL_ID)
         if not channel:
+            print(f"❌ [Send] 找不到頻道 ID: {ANNOUNCE_CHANNEL_ID}")
             return
 
         embed = self.build_embed_grid(stream_data, avatar_url)
         view = StreamView(TWITCH_CHANNEL_NAME)
         stream_url = f"https://www.twitch.tv/{TWITCH_CHANNEL_NAME}"
 
-        msg = await channel.send(
-            content=f"@everyone\n準備狗叫啦~\n<{stream_url}>", embed=embed, view=view
-        )
-        self.last_msg_id = msg.id
+        try:
+            msg = await channel.send(
+                content=f"@everyone\n準備狗叫啦~\n<{stream_url}>", embed=embed, view=view
+            )
+            self.last_msg_id = msg.id
+            print(f"✅ [Send] 成功發送開台通知，訊息 ID: {msg.id}")
+        except Exception as e:
+            print(f"❌ [Send] 發送失敗: {e}")
 
     # 即時更新舊卡片數據
     async def update_stream_notice(self, stream_data, avatar_url):
@@ -142,12 +160,14 @@ class StreamCog(commands.Cog):
             new_embed = self.build_embed_grid(stream_data, avatar_url)
             view = StreamView(TWITCH_CHANNEL_NAME)
             await msg.edit(embed=new_embed, view=view)
+            print(f"✅ [Update] 卡片已更新")
         except discord.NotFound:
+            print(f"⚠️ [Update] 找不到舊訊息，重新發送...")
             self.is_live = False
             self.last_msg_id = None
             await self.send_stream_notice(stream_data, avatar_url)
         except Exception as e:
-            print(f"更新失敗: {e}")
+            print(f"❌ [Update] 更新失敗: {e}")
 
     # ==========================================
     # 🎨 排版：雙欄完美對齊版本 (純粗體設計)
@@ -162,15 +182,18 @@ class StreamCog(commands.Cog):
         # 計算開台時長
         duration_str = "0 hrs, 0 mins"
         if started_at_str:
-            started_at = datetime.datetime.fromisoformat(
-                started_at_str.replace("Z", "+00:00")
-            )
-            now = datetime.datetime.now(datetime.timezone.utc)
-            duration_delta = now - started_at
+            try:
+                started_at = datetime.datetime.fromisoformat(
+                    started_at_str.replace("Z", "+00:00")
+                )
+                now = datetime.datetime.now(datetime.timezone.utc)
+                duration_delta = now - started_at
 
-            hours = int(duration_delta.total_seconds() // 3600)
-            minutes = int((duration_delta.total_seconds() % 3600) // 60)
-            duration_str = f"{hours} hrs, {minutes} mins"
+                hours = int(duration_delta.total_seconds() // 3600)
+                minutes = int((duration_delta.total_seconds() % 3600) // 60)
+                duration_str = f"{hours} hrs, {minutes} mins"
+            except Exception as e:
+                print(f"⚠️ [BuildEmbed] 時間轉換失敗: {e}")
 
         embed = discord.Embed(
             title="🌴 霓夜台 | 直播即時狀態",
@@ -197,6 +220,8 @@ class StreamCog(commands.Cog):
         thumb_url = stream_data.get("safe_thumb_url", avatar_url)
         if thumb_url:
             embed.set_image(url=thumb_url)
+        else:
+            print(f"⚠️ [BuildEmbed] 沒有圖片 URL")
 
         embed.set_footer(text=f"streamcord.io • Updated every minute • {datetime.datetime.now().strftime('%p %I:%M')}")
         return embed
@@ -216,12 +241,13 @@ class StreamCog(commands.Cog):
                 await msg.edit(
                     content="💤 **霓夜已關台**", embed=embed, view=None
                 )
+                print(f"✅ [Offline] 卡片已更新為停播狀態")
             except Exception as e:
-                print(f"關台更新失敗: {e}")
+                print(f"❌ [Offline] 關台更新失敗: {e}")
 
-    # 管理員測試指令
+    # 管理員測試指令 (抓取真實數據)
     @app_commands.command(
-        name="test_stream", description="測試開台通知卡片"
+        name="test_stream", description="測試開台通知卡片 (抓取目前真實的實況狀態)"
     )
     @app_commands.checks.has_permissions(administrator=True)
     async def test_stream(self, interaction: discord.Interaction):
@@ -232,23 +258,83 @@ class StreamCog(commands.Cog):
             await interaction.followup.send("❌ 找不到指定的公告頻道，請檢查 ANNOUNCE_CHANNEL_ID 設定！")
             return
 
-        stream_url = f"https://www.twitch.tv/{TWITCH_CHANNEL_NAME}"
-        timestamp = int(datetime.datetime.now().timestamp())
-        fake_thumb_url = f"https://static-cdn.jtvnw.net/previews-img/live_user_{TWITCH_CHANNEL_NAME.lower()}-1280x720.jpg?t={timestamp}"
-        
-        fake_stream_data = {
-            "title": "[霓夜Niya]0828 | 今天要做啥 【歡迎追蹤|200追有抽獎|記得開5%🔊唷】",
-            "game_name": "VALORANT",
-            "viewer_count": 7,
-            "started_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            "safe_thumb_url": fake_thumb_url
+        # 確保有 token 可以發送請求
+        if not self.access_token:
+            await self.get_twitch_token()
+
+        url = f"https://api.twitch.tv/helix/streams?user_login={TWITCH_CHANNEL_NAME}"
+        headers = {
+            "Client-ID": TWITCH_CLIENT_ID,
+            "Authorization": f"Bearer {self.access_token}",
         }
+        user_url = f"https://api.twitch.tv/helix/users?login={TWITCH_CHANNEL_NAME}"
 
-        embed = self.build_embed_grid(fake_stream_data, None)
+        async with aiohttp.ClientSession() as session:
+            # 1. 抓取目前真實的直播數據
+            print(f"🔍 [Test] 查詢 Twitch API: {TWITCH_CHANNEL_NAME}")
+            async with session.get(url, headers=headers) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    streams = data.get("data", [])
+                    print(f"📡 [Test] API 回應: {len(streams)} 個直播")
+                else:
+                    print(f"❌ [Test] API 錯誤: {resp.status}")
+                    streams = []
+
+            # 2. 抓取主播頭貼
+            avatar_url = None
+            async with session.get(user_url, headers=headers) as user_resp:
+                if user_resp.status == 200:
+                    user_data = await user_resp.json()
+                    users = user_data.get("data", [])
+                    if users:
+                        avatar_url = users[0].get("profile_image_url")
+                        print(f"👤 [Test] 取得頭貼: {avatar_url[:60]}...")
+
+        # 判斷是否真的開台中
+        if not streams:
+            print(f"⚠️ [Test] {TWITCH_CHANNEL_NAME} 目前未開台")
+            await interaction.followup.send(
+                "⚠️ **目前 Twitch API 顯示未開台**\n"
+                "如果主播剛剛才開，請等待 1~2 分鐘讓 Twitch 伺服器更新後再測一次！"
+            )
+            return
+
+        # 3. 處理真實圖片 (帶入時間戳破除 Discord 快取)
+        stream_data = streams[0]
+        title = stream_data.get("title", "開台中")
+        game = stream_data.get("game_name", "未指定")
+        viewers = stream_data.get("viewer_count", 0)
+        
+        thumbnail_url = stream_data.get("thumbnail_url", "")
+        timestamp = int(datetime.datetime.now().timestamp())
+        
+        if thumbnail_url:
+            base_thumb_url = thumbnail_url.replace("{width}", "1280").replace("{height}", "720")
+            final_thumb_url = f"{base_thumb_url}?t={timestamp}"
+            print(f"🖼️ [Test] 使用 API 圖片: {base_thumb_url[:60]}...")
+        else:
+            final_thumb_url = f"https://static-cdn.jtvnw.net/previews-img/live_user_{TWITCH_CHANNEL_NAME.lower()}-1280x720.jpg?t={timestamp}"
+            print(f"⚙️ [Test] 使用備援 URL")
+
+        stream_data["safe_thumb_url"] = final_thumb_url
+
+        # 4. 組裝與發送真實卡片
+        embed = self.build_embed_grid(stream_data, avatar_url)
         view = StreamView(TWITCH_CHANNEL_NAME)
+        stream_url = f"https://www.twitch.tv/{TWITCH_CHANNEL_NAME}"
 
-        await channel.send(content=f"@everyone\n準備狗叫啦~\n<{stream_url}>", embed=embed, view=view)
-        await interaction.followup.send("✅ 測試卡片已發送至公告頻道！")
+        print(f"✅ [Test] 發送卡片到 Discord")
+        await channel.send(
+            content=f"@everyone\n準備狗叫啦~\n<{stream_url}>", embed=embed, view=view
+        )
+        await interaction.followup.send(
+            f"✅ 成功抓取真實數據！\n"
+            f"📺 **標題**：{title}\n"
+            f"🎮 **遊戲**：{game}\n"
+            f"👥 **觀眾**：{viewers} 人\n"
+            f"請至公告頻道查看最新卡片。"
+        )
 
 
 async def setup(bot):
