@@ -3,6 +3,20 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+# 授權白名單頻道 ID 列表
+ALLOWED_CHANNEL_IDS = [1542821360215265280]
+
+def is_allowed_channel():
+    async def predicate(interaction: discord.Interaction):
+        if interaction.channel_id not in ALLOWED_CHANNEL_IDS:
+            await interaction.response.send_message(
+                "❌ 此指令只能在指定的桌遊專屬頻道中使用！",
+                ephemeral=True
+            )
+            return False
+        return True
+    return app_commands.check(predicate)
+
 # ==================== 桌遊選單 UI ====================
 class BoardGameSelect(discord.ui.Select):
     def __init__(self):
@@ -120,7 +134,7 @@ class PartyView(discord.ui.View):
             embed = await self._create_embed()
             embed.title = f"🎉 {embed.title}"
             embed.description = f"**當前人數**：`{len(self.players)} / {self.max_players}` ✅ **人數已滿！**\n\n**已加入玩家：**\n" + \
-                              "\n".join([f"• {p.mention}" for p in self.players])
+                                    "\n".join([f"• {p.mention}" for p in self.players])
             await interaction.response.edit_message(embed=embed, view=self)
         else:
             await self.update_embed(interaction)
@@ -199,6 +213,7 @@ class BoardGameCog(commands.Cog):
 
     # 1. 遊戲選單指令
     @app_commands.command(name="boardgame_list", description="查看經典桌遊列表與規則說明")
+    @is_allowed_channel()
     async def boardgame_list(self, interaction: discord.Interaction):
         embed = discord.Embed(
             title="🎲 DC 桌遊中心",
@@ -214,6 +229,7 @@ class BoardGameCog(commands.Cog):
         game="遊戲名稱（例如：阿瓦隆/UNO/牛頭王/蟑螂）",
         max_players="預計招募人數 (2-10 人)"
     )
+    @is_allowed_channel()
     async def boardgame_party(self, interaction: discord.Interaction, game: str, max_players: int = 6):
         # ✅ 驗證人數範圍
         if not 2 <= max_players <= 10:
@@ -233,7 +249,7 @@ class BoardGameCog(commands.Cog):
 
         embed = discord.Embed(
             title=f"🎲 桌遊揪團囉：{game}",
-            description=f"**當前人數**：`1 / {max_players}`（發起人：{interaction.user.mention}）\n\n**已加入玩家：**\n• {interaction.user.mention}",
+            description=f"**當前人數**：`1 / {max_players}`（發起人：{interaction.user.mention}）\n\n**已加入玩家：\n• {interaction.user.mention}",
             color=discord.Color.blue()
         )
         embed.set_footer(text="提示：點擊「開始遊戲」按鈕時，所有玩家必須已確認加入。")
@@ -247,6 +263,7 @@ class BoardGameCog(commands.Cog):
 
     # 3. 抽 UNO 牌指令（娛樂用）
     @app_commands.command(name="uno_draw", description="隨機抽取一張 UNO 卡牌！")
+    @is_allowed_channel()
     async def uno_draw(self, interaction: discord.Interaction):
         colors = [
             {"name": "🔴 紅色", "color": discord.Color.red()},
@@ -266,7 +283,7 @@ class BoardGameCog(commands.Cog):
             card = random.choice(special_cards)
             embed = discord.Embed(
                 title="🃏 UNO 卡牌抽取",
-                description=f"{interaction.user.mention} 抽到了一張特殊卡：\n\n**{card['name']}**\n\n{card['desc']}",
+                description=f"{interaction.user.mention} 抽到了一張特殊卡：\n\n**\n\n{card['desc']}",
                 color=discord.Color.gold()
             )
         else:
@@ -283,6 +300,7 @@ class BoardGameCog(commands.Cog):
 
     # 4. 骰子指令（補充娛樂功能）
     @app_commands.command(name="dice", description="擲骰子！(1-6)")
+    @is_allowed_channel()
     async def dice(self, interaction: discord.Interaction):
         result = random.randint(1, 6)
         dice_faces = ["⚀", "⚁", "⚂", "⚃", "⚄", "⚅"]
@@ -296,6 +314,7 @@ class BoardGameCog(commands.Cog):
 
     # 5. 隨機選擇器指令（幫助決定玩什麼）
     @app_commands.command(name="pick_game", description="隨機選擇一個桌遊！")
+    @is_allowed_channel()
     async def pick_game(self, interaction: discord.Interaction):
         games = ["阿瓦隆", "誰是牛頭王", "UNO", "德國蟑螂"]
         picked = random.choice(games)
@@ -306,11 +325,6 @@ class BoardGameCog(commands.Cog):
             color=discord.Color.random()
         )
         await interaction.response.send_message(embed=embed)
-
-
-async def setup(bot):
-    await bot.add_cog(BoardGameCog(bot))
-
 
 
 async def setup(bot):
