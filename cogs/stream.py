@@ -15,7 +15,6 @@ try:
 except ValueError:
     ANNOUNCE_CHANNEL_ID = 0
 
-# 調試輸出環境變數狀態
 print(f"🔍 TWITCH_CLIENT_ID: {'✅ 已設定' if TWITCH_CLIENT_ID else '❌ 未設定'}")
 print(f"🔍 TWITCH_CLIENT_SECRET: {'✅ 已設定' if TWITCH_CLIENT_SECRET else '❌ 未設定'}")
 print(f"🔍 ANNOUNCE_CHANNEL_ID: {'✅ 已設定' if ANNOUNCE_CHANNEL_ID != 0 else '❌ 未設定'}")
@@ -46,7 +45,7 @@ class StreamCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.access_token = None
-        self.is_live = False
+        self.last_notified_stream_id = None  # 記錄已經發過通知的直播 ID
         self.last_msg_id = None
         self.check_twitch_live.start()
 
@@ -101,7 +100,10 @@ class StreamCog(commands.Cog):
                                 avatar_url = users[0].get("profile_image_url")
 
                     if streams:
-                        thumbnail_url = streams[0].get("thumbnail_url", "")
+                        current_stream = streams[0]
+                        current_stream_id = current_stream.get("id")
+                        
+                        thumbnail_url = current_stream.get("thumbnail_url", "")
                         timestamp = int(datetime.datetime.now().timestamp())
                         
                         if thumbnail_url:
@@ -110,16 +112,42 @@ class StreamCog(commands.Cog):
                         else:
                             final_thumb_url = f"https://static-cdn.jtvnw.net/previews-img/live_user_{TWITCH_CHANNEL_NAME.lower()}-1280x720.jpg?t={timestamp}"
 
-                        streams[0]["safe_thumb_url"] = final_thumb_url
+                        current_stream["safe_thumb_url"] = final_thumb_url
 
-                    if streams and not self.is_live:
-                        self.is_live = True
-                        await self.send_stream_notice(streams[0], avatar_url)
-                    elif streams and self.is_live:
-                        await self.update_stream_notice(streams[0], avatar_url)
-                    elif not streams and self.is_live:
-                        self.is_live = False
-                        await self.handle_stream_offline()
+                        # 如果這場直播 ID 還沒被記錄過
+                        if self.last_notified_stream_id != current_stream_id:
+                            started_at_str = current_stream.get("started_at")
+                            is_truly_new = True
+
+                            if started_at_str:
+                                try:
+                                    started_at = datetime.datetime.fromisoformat(
+                                        started_at_str.replace("Z", "+00:00")
+                                    )
+                                    now = datetime.datetime.now(datetime.timezone.utc)
+                                    time_since_start = (now - started_at).total_seconds()
+                                    
+                                    # 如果已開播超過 5 分鐘（300秒），說明是機器人重啟碰巧遇到舊直播，不發 @everyone
+                                    if time_since_start > 300:
+                                        print("⚠️ [Stream] 檢測到舊直播重啟，略過 @everyone，僅更新卡片")
+                                        is_truly_new = False
+                                except Exception as e:
+                                    print(f"⚠️ [Stream] 檢查開播時間失敗: {e}")
+
+                            self.last_notified_stream_id = current_stream_id
+
+                            if is_truly_new:
+                                await self.send_stream_notice(current_stream, avatar_url)
+                            else:
+                                await self.update_stream_notice(current_stream, avatar_url)
+                        else:
+                            # 已經記錄過了，正常更新卡片
+                            await self.update_stream_notice(current_stream, avatar_url)
+                    else:
+                        # 沒開台時，重置記錄
+                        if self.last_notified_stream_id is not None:
+                            await self.handle_stream_offline()
+                            self.last_notified_stream_id = None
 
     @check_twitch_live.before_loop
     async def before_check(self):
@@ -154,7 +182,6 @@ class StreamCog(commands.Cog):
             view = StreamView(TWITCH_CHANNEL_NAME)
             await msg.edit(embed=new_embed, view=view)
         except discord.NotFound:
-            self.is_live = False
             self.last_msg_id = None
             await self.send_stream_notice(stream_data, avatar_url)
         except Exception as e:
