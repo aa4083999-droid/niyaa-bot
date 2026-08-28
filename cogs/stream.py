@@ -13,14 +13,14 @@ ANNOUNCE_CHANNEL_ID = 1507590474599235656  # Discord 公告頻道 ID
 # ============================================================
 
 
-# 仿照 Streamcord 風格的底部按鈕 (label 可自行改成中文，例如 "觀看直播")
+# 仿照 Streamcord 風格的底部按鈕 (已將按鈕文字改為「前往 Twitch 觀看」)
 class StreamView(discord.ui.View):
     def __init__(self, channel_name):
         super().__init__(timeout=None)
         stream_url = f"https://www.twitch.tv/{channel_name}"
         self.add_item(
             discord.ui.Button(
-                label="Watch Stream",
+                label="前往 Twitch 觀看",
                 url=stream_url,
                 style=discord.ButtonStyle.link,
             )
