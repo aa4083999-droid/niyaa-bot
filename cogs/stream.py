@@ -13,7 +13,7 @@ ANNOUNCE_CHANNEL_ID = 1507590474599235656  # Discord 公告頻道 ID
 # ============================================================
 
 
-# 仿照 Streamcord 風格的底部按鈕
+# 仿照 Streamcord 風格的底部按鈕 (label 可自行改成中文，例如 "觀看直播")
 class StreamView(discord.ui.View):
     def __init__(self, channel_name):
         super().__init__(timeout=None)
@@ -150,7 +150,7 @@ class StreamCog(commands.Cog):
             print(f"更新失敗: {e}")
 
     # ==========================================
-    # 🎨 排版：雙欄完美對齊版本 (移除灰色框框，改用粗體)
+    # 🎨 排版：雙欄完美對齊版本 (純粗體設計)
     # ==========================================
     def build_embed_grid(self, stream_data, avatar_url):
         title = stream_data.get("title", "霓夜開台囉！")
@@ -187,7 +187,7 @@ class StreamCog(commands.Cog):
         else:
             embed.set_author(name=f"{TWITCH_CHANNEL_NAME} is now live on Twitch!")
 
-        # 🌟 雙欄防跑版設計 (全部改用粗體代替原本的灰色程式碼方框)
+        # 🌟 雙欄防跑版設計 (全部使用粗體)
         left_column = f"🟢 正在直播中...\n👥 觀看人數：**{viewers} 人**"
         right_column = f"🎮 **{game}**\n⏱️ 開台時長：**{duration_str}**"
 
@@ -253,4 +253,3 @@ class StreamCog(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(StreamCog(bot))
-    
