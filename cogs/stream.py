@@ -150,7 +150,7 @@ class StreamCog(commands.Cog):
             print(f"更新失敗: {e}")
 
     # ==========================================
-    # 🎨 排版：2x2 對稱佈局 (已修正上下對齊)
+    # 🎨 排版優化：採用 2 欄位上下組合，保證永不跑版
     # ==========================================
     def build_embed_grid(self, stream_data, avatar_url):
         title = stream_data.get("title", "霓夜開台囉！")
@@ -187,13 +187,12 @@ class StreamCog(commands.Cog):
         else:
             embed.set_author(name=f"{TWITCH_CHANNEL_NAME} is now live on Twitch!")
 
-        # 🌟 完美對齊的 2x2 欄位順序 (每排 3 個欄位：A、B、空白 | C、D)
-        embed.add_field(name="狀態", value="**🟢 正在直播中...**", inline=True)
-        embed.add_field(name="遊戲分類", value=f"**🎮 {game}**", inline=True)
-        embed.add_field(name="\u200b", value="\u200b", inline=True)  # 第一排的隱形佔位空白
-        
-        embed.add_field(name="線上觀眾", value=f"**👥 {viewers} 人**", inline=True)
-        embed.add_field(name="開台時長", value=f"**⏱️ {duration_str}**", inline=True)
+        # 🌟 透過合併欄位內容，只用左右 2 個欄位，徹底解決跑版問題
+        left_column = f"**🟢 正在直播中...**\n**👥 觀看人數：** `{viewers} 人`"
+        right_column = f"**🎮 {game}**\n**⏱️ 開台時長：** `{duration_str}`"
+
+        embed.add_field(name="直播資訊", value=left_column, inline=True)
+        embed.add_field(name="遊戲與時長", value=right_column, inline=True)
 
         thumb_url = stream_data.get("safe_thumb_url", avatar_url)
         if thumb_url:
