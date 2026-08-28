@@ -150,27 +150,13 @@ class StreamCog(commands.Cog):
             print(f"更新失敗: {e}")
 
     # ==========================================
-    # 🎨 排版優化：採用 2 欄位上下組合，保證永不跑版
+    # 🎨 排版：3 欄位橫向並排 (狀態、線上觀眾、遊戲分類)
     # ==========================================
     def build_embed_grid(self, stream_data, avatar_url):
         title = stream_data.get("title", "霓夜開台囉！")
         game = stream_data.get("game_name", "未指定分類")
         viewers = stream_data.get("viewer_count", 0)
-        started_at_str = stream_data.get("started_at")
         stream_url = f"https://www.twitch.tv/{TWITCH_CHANNEL_NAME}"
-        
-        # 計算開台時長
-        duration_str = "0 hrs, 0 mins"
-        if started_at_str:
-            started_at = datetime.datetime.fromisoformat(
-                started_at_str.replace("Z", "+00:00")
-            )
-            now = datetime.datetime.now(datetime.timezone.utc)
-            duration_delta = now - started_at
-
-            hours = int(duration_delta.total_seconds() // 3600)
-            minutes = int((duration_delta.total_seconds() % 3600) // 60)
-            duration_str = f"{hours} hrs, {minutes} mins"
 
         embed = discord.Embed(
             title="🌴 霓夜台 | 直播即時狀態",
@@ -187,12 +173,10 @@ class StreamCog(commands.Cog):
         else:
             embed.set_author(name=f"{TWITCH_CHANNEL_NAME} is now live on Twitch!")
 
-        # 🌟 透過合併欄位內容，只用左右 2 個欄位，徹底解決跑版問題
-        left_column = f"**🟢 正在直播中...**\n**👥 觀看人數：** `{viewers} 人`"
-        right_column = f"**🎮 {game}**\n**⏱️ 開台時長：** `{duration_str}`"
-
-        embed.add_field(name="直播資訊", value=left_column, inline=True)
-        embed.add_field(name="遊戲與時長", value=right_column, inline=True)
+        # 🌟 剛好 3 個欄位，完美橫向排列在一排
+        embed.add_field(name="狀態", value="🟢 正在直播中...", inline=True)
+        embed.add_field(name="線上觀眾", value=f"`{viewers} 人線上`", inline=True)
+        embed.add_field(name="遊戲分類", value=f"`{game}`", inline=True)
 
         thumb_url = stream_data.get("safe_thumb_url", avatar_url)
         if thumb_url:
@@ -219,7 +203,7 @@ class StreamCog(commands.Cog):
             except Exception as e:
                 print(f"關台更新失敗: {e}")
 
-    # 管理員測試指令
+    # 管理員測試指令 (已移除第二版，只保留單一標準排版測試)
     @app_commands.command(
         name="test_stream", description="測試開台通知卡片"
     )
@@ -239,8 +223,7 @@ class StreamCog(commands.Cog):
         fake_stream_data = {
             "title": "[霓夜Niya]0828 | 今天要做啥 【歡迎追蹤|200追有抽獎|記得開5%🔊唷】",
             "game_name": "VALORANT",
-            "viewer_count": 8,
-            "started_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "viewer_count": 7,
             "safe_thumb_url": fake_thumb_url
         }
 
