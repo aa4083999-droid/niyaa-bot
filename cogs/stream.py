@@ -150,7 +150,7 @@ class StreamCog(commands.Cog):
             print(f"更新失敗: {e}")
 
     # ==========================================
-    # 🎨 排版：雙欄完美對齊版本 (包含時長與觀眾數)
+    # 🎨 排版：雙欄完美對齊版本 (移除灰色框框，改用粗體)
     # ==========================================
     def build_embed_grid(self, stream_data, avatar_url):
         title = stream_data.get("title", "霓夜開台囉！")
@@ -187,9 +187,9 @@ class StreamCog(commands.Cog):
         else:
             embed.set_author(name=f"{TWITCH_CHANNEL_NAME} is now live on Twitch!")
 
-        # 🌟 雙欄防跑版設計
-        left_column = f"🟢 正在直播中...\n👥 觀看人數：`{viewers} 人`"
-        right_column = f"🎮 `{game}`\n⏱️ 開台時長：`{duration_str}`"
+        # 🌟 雙欄防跑版設計 (全部改用粗體代替原本的灰色程式碼方框)
+        left_column = f"🟢 正在直播中...\n👥 觀看人數：**{viewers} 人**"
+        right_column = f"🎮 **{game}**\n⏱️ 開台時長：**{duration_str}**"
 
         embed.add_field(name="直播資訊", value=left_column, inline=True)
         embed.add_field(name="遊戲與時長", value=right_column, inline=True)
