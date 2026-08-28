@@ -118,13 +118,13 @@ class StreamCog(commands.Cog):
     async def before_check(self):
         await self.bot.wait_until_ready()
 
-    # 發送全新的開台通知
+    # 發送全新的開台通知 (正式通知預設使用排版一：2x2 對稱佈局，你也可以隨時換成排版二)
     async def send_stream_notice(self, stream_data, avatar_url):
         channel = self.bot.get_channel(ANNOUNCE_CHANNEL_ID)
         if not channel:
             return
 
-        embed = self.build_embed(stream_data, avatar_url)
+        embed = self.build_embed_grid(stream_data, avatar_url)
         view = StreamView(TWITCH_CHANNEL_NAME)
         stream_url = f"https://www.twitch.tv/{TWITCH_CHANNEL_NAME}"
 
@@ -142,7 +142,7 @@ class StreamCog(commands.Cog):
 
         try:
             msg = await channel.fetch_message(self.last_msg_id)
-            new_embed = self.build_embed(stream_data, avatar_url)
+            new_embed = self.build_embed_grid(stream_data, avatar_url)
             view = StreamView(TWITCH_CHANNEL_NAME)
             await msg.edit(embed=new_embed, view=view)
         except discord.NotFound:
@@ -152,8 +152,10 @@ class StreamCog(commands.Cog):
         except Exception as e:
             print(f"更新失敗: {e}")
 
-    # 建立結合精緻面板與安全預覽圖的卡片
-    def build_embed(self, stream_data, avatar_url):
+    # ==========================================
+    # 🎨 排版一：2x2 對稱佈局 & 粗體放大 (正式通知使用此函數)
+    # ==========================================
+    def build_embed_grid(self, stream_data, avatar_url):
         title = stream_data.get("title", "霓夜開台囉！")
         game = stream_data.get("game_name", "未指定分類")
         viewers = stream_data.get("viewer_count", 0)
@@ -161,7 +163,7 @@ class StreamCog(commands.Cog):
         stream_url = f"https://www.twitch.tv/{TWITCH_CHANNEL_NAME}"
         
         # 計算開台時長
-        duration_str = "`0 hrs, 0 min`"
+        duration_str = "0 hrs, 0 mins"
         if started_at_str:
             started_at = datetime.datetime.fromisoformat(
                 started_at_str.replace("Z", "+00:00")
@@ -180,22 +182,21 @@ class StreamCog(commands.Cog):
                 f"**目前直播標題**：[{title}]({stream_url})\n"
                 f"若有問題請在 Discord 反映"
             ),
-            color=discord.Color.from_rgb(100, 65, 165),  # Twitch 紫色邊條
+            color=discord.Color.from_rgb(100, 65, 165),
         )
 
-        # 頂部作者列：顯示主播頭貼
         if avatar_url:
             embed.set_author(name=f"{TWITCH_CHANNEL_NAME} is now live on Twitch!", icon_url=avatar_url)
         else:
             embed.set_author(name=f"{TWITCH_CHANNEL_NAME} is now live on Twitch!")
 
-        # 狀態面板欄位排版
-        embed.add_field(name="狀態", value="`🟢 正在直播中...`", inline=True)
-        embed.add_field(name="線上觀眾", value=f"`{viewers} 人線上`", inline=True)
-        embed.add_field(name="遊戲分類", value=f"`{game}`", inline=True)
-        embed.add_field(name="開台時長", value=f"`{duration_str}`", inline=True)
+        # 2x2 對稱欄位
+        embed.add_field(name="狀態", value="**🟢 正在直播中...**", inline=True)
+        embed.add_field(name="線上觀眾", value=f"**👥 {viewers} 人**", inline=True)
+        embed.add_field(name="\u200b", value="\u200b", inline=True)  # 隱形空白換行
+        embed.add_field(name="遊戲分類", value=f"**🎮 {game}**", inline=True)
+        embed.add_field(name="開台時長", value=f"**⏱️ {duration_str}**", inline=True)
 
-        # 設定大圖預覽
         thumb_url = stream_data.get("safe_thumb_url", avatar_url)
         if thumb_url:
             embed.set_image(url=thumb_url)
@@ -221,9 +222,11 @@ class StreamCog(commands.Cog):
             except Exception as e:
                 print(f"關台更新失敗: {e}")
 
-    # 管理員測試指令
+    # ==========================================
+    # 管理員測試指令：同時發送兩種排版供比較
+    # ==========================================
     @app_commands.command(
-        name="test_stream", description="測試開台通知卡片"
+        name="test_stream", description="測試開台通知卡片 (同時發送兩種排版供比較)"
     )
     @app_commands.checks.has_permissions(administrator=True)
     async def test_stream(self, interaction: discord.Interaction):
@@ -231,46 +234,70 @@ class StreamCog(commands.Cog):
 
         channel = self.bot.get_channel(ANNOUNCE_CHANNEL_ID)
         if not channel:
-            await interaction.followup.send(
-                "❌ 找不到指定的公告頻道，請檢查 ANNOUNCE_CHANNEL_ID 設定！"
-            )
+            await interaction.followup.send("❌ 找不到指定的公告頻道，請檢查 ANNOUNCE_CHANNEL_ID 設定！")
             return
 
         stream_url = f"https://www.twitch.tv/{TWITCH_CHANNEL_NAME}"
         timestamp = int(datetime.datetime.now().timestamp())
+        fake_thumb_url = f"https://static-cdn.jtvnw.net/previews-img/live_user_{TWITCH_CHANNEL_NAME.lower()}-1280x720.jpg?t={timestamp}"
         
-        # 📌 測試指令直接拼接大圖
-        thumb_url = f"https://static-cdn.jtvnw.net/previews-img/live_user_{TWITCH_CHANNEL_NAME.lower()}-1280x720.jpg?t={timestamp}"
+        # 測試用的模擬文字資料
+        title = "[霓夜Niya]0825 | 休假也好累 【歡迎追蹤|200追有抽獎|記得開5%🔊唷】"
+        game = "VALORANT"
+        viewers = 100
+        duration_str = "1 hrs, 15 mins"
 
-        embed = discord.Embed(
-            title="🌴 霓夜台 | 直播即時狀態",
+        # ------------------------------------------
+        # 🎨 排版一：2x2 對稱佈局 & 粗體放大
+        # ------------------------------------------
+        embed1 = discord.Embed(
+            title="🌴 霓夜台 | 直播即時狀態 (排版一：2x2 對稱格子)",
             description=(
                 f"歡迎來到霓夜的直播間！\n"
-                f"**目前直播標題**：[[霓夜Niya]0825 | 休假也好累 【歡迎追蹤|200追有抽獎|記得開5%🔊唷】]({stream_url})\n"
+                f"**目前直播標題**：[{title}]({stream_url})\n"
                 f"若有問題請在 Discord 反映"
             ),
             color=discord.Color.from_rgb(100, 65, 165),
         )
-        embed.set_author(name=f"{TWITCH_CHANNEL_NAME} is now live on Twitch!")
+        embed1.set_author(name=f"{TWITCH_CHANNEL_NAME} is now live on Twitch!")
         
-        embed.add_field(name="狀態", value="`🟢 正在直播中...`", inline=True)
-        embed.add_field(name="線上觀眾", value="`100 人線上`", inline=True)
-        embed.add_field(name="遊戲分類", value="`VALORANT`", inline=True)
-        embed.add_field(name="開台時長", value="`1 hrs, 15 mins`", inline=True)
+        embed1.add_field(name="狀態", value="**🟢 正在直播中...**", inline=True)
+        embed1.add_field(name="線上觀眾", value=f"**👥 {viewers} 人**", inline=True)
+        embed1.add_field(name="\u200b", value="\u200b", inline=True)  # 隱形空白換行
+        embed1.add_field(name="遊戲分類", value=f"**🎮 {game}**", inline=True)
+        embed1.add_field(name="開台時長", value=f"**⏱️ {duration_str}**", inline=True)
+        
+        embed1.set_image(url=fake_thumb_url)
+        embed1.set_footer(text=f"streamcord.io • {datetime.datetime.now().strftime('%p %I:%M')}")
 
-        if thumb_url:
-            embed.set_image(url=thumb_url)
-
-        embed.set_footer(text=f"streamcord.io • Updated every minute • {datetime.datetime.now().strftime('%p %I:%M')}")
-
-        view = StreamView(TWITCH_CHANNEL_NAME)
-        # 🌟 測試訊息一樣加上 < >
-        await channel.send(
-            content=f"@everyone\n準備狗叫啦~\n<{stream_url}>", embed=embed, view=view
+        # ------------------------------------------
+        # 🎨 排版二：Discord 原生 H3 大字體清單
+        # ------------------------------------------
+        embed2 = discord.Embed(
+            title="🌴 霓夜台 | 直播即時狀態 (排版二：大字體清單)",
+            description=(
+                f"歡迎來到霓夜的直播間！\n"
+                f"**目前直播標題**：[{title}]({stream_url})\n"
+                f"若有問題請在 Discord 反映\n\n"
+                f"### 🟢 狀態：正在直播中\n"
+                f"### 👥 觀眾：{viewers} 人\n"
+                f"### 🎮 遊戲：{game}\n"
+                f"### ⏱️ 時長：{duration_str}"
+            ),
+            color=discord.Color.from_rgb(100, 65, 165),
         )
-        await interaction.followup.send(
-            "✅ 測試卡片發送成功！去公告頻道看看吧！"
-        )
+        embed2.set_author(name=f"{TWITCH_CHANNEL_NAME} is now live on Twitch!")
+        embed2.set_image(url=fake_thumb_url)
+        embed2.set_footer(text=f"streamcord.io • {datetime.datetime.now().strftime('%p %I:%M')}")
+
+        # 發送兩則訊息到頻道讓您直接比較
+        view1 = StreamView(TWITCH_CHANNEL_NAME)
+        view2 = StreamView(TWITCH_CHANNEL_NAME)
+
+        await channel.send(content=f"@everyone\n👇 **【測試排版一：對稱格子】**\n<{stream_url}>", embed=embed1, view=view1)
+        await channel.send(content=f"@everyone\n👇 **【測試排版二：大字體清單】**\n<{stream_url}>", embed=embed2, view=view2)
+
+        await interaction.followup.send("✅ 兩種排版都已經發送到公告頻道囉！請去頻道裡看看你比較喜歡哪一種！")
 
 
 async def setup(bot):
