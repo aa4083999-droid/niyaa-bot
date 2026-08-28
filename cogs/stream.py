@@ -15,7 +15,6 @@ ANNOUNCE_CHANNEL_ID = 1507591638904471603  # Discord 公告頻道 ID
 
 # 仿照 Streamcord 風格的底部按鈕
 class StreamView(discord.ui.View):
-
     def __init__(self, channel_name):
         super().__init__(timeout=None)
         stream_url = f"https://www.twitch.tv/{channel_name}"
@@ -29,7 +28,6 @@ class StreamView(discord.ui.View):
 
 
 class StreamCog(commands.Cog):
-
     def __init__(self, bot):
         self.bot = bot
         self.access_token = None
@@ -88,18 +86,17 @@ class StreamCog(commands.Cog):
                                 avatar_url = users[0].get("profile_image_url")
 
                     if streams:
-                        # 🌟 智慧防護：檢查 Twitch 預覽圖是否存在 (避免 404 導致手機/電腦破圖)
+                        # 🌟 智慧防護：直接使用 API 的預覽圖並替換解析度，加上時間戳強制刷新快取
+                        thumbnail_url = streams[0].get("thumbnail_url", "")
                         timestamp = int(datetime.datetime.now().timestamp())
-                        raw_thumb_url = f"https://static-cdn.jtvnw.net/previews-img/live_user_{TWITCH_CHANNEL_NAME}-1280x720.jpg"
                         
-                        try:
-                            async with session.head(raw_thumb_url) as thumb_resp:
-                                if thumb_resp.status == 200:
-                                    final_thumb_url = f"{raw_thumb_url}?t={timestamp}"
-                                else:
-                                    final_thumb_url = avatar_url
-                        except Exception:
-                            final_thumb_url = avatar_url
+                        if thumbnail_url:
+                            # 替換 Twitch API 回傳的 {width} 和 {height} 為標準 16:9 解析度
+                            base_thumb_url = thumbnail_url.replace("{width}", "1280").replace("{height}", "720")
+                            final_thumb_url = f"{base_thumb_url}?t={timestamp}"
+                        else:
+                            # 防呆機制：直接拼接圖片網址
+                            final_thumb_url = f"https://static-cdn.jtvnw.net/previews-img/live_user_{TWITCH_CHANNEL_NAME.lower()}-1280x720.jpg?t={timestamp}"
 
                         streams[0]["safe_thumb_url"] = final_thumb_url
 
@@ -131,8 +128,9 @@ class StreamCog(commands.Cog):
         view = StreamView(TWITCH_CHANNEL_NAME)
         stream_url = f"https://www.twitch.tv/{TWITCH_CHANNEL_NAME}"
 
+        # 🌟 加上 < > 隱藏 Discord 預設的陽春網址預覽
         msg = await channel.send(
-            content=f"@everyone\n準備狗叫啦~\n{stream_url}", embed=embed, view=view
+            content=f"@everyone\n準備狗叫啦~\n<{stream_url}>", embed=embed, view=view
         )
         self.last_msg_id = msg.id
 
@@ -197,7 +195,7 @@ class StreamCog(commands.Cog):
         embed.add_field(name="遊戲分類", value=f"`{game}`", inline=True)
         embed.add_field(name="開台時長", value=f"`{duration_str}`", inline=True)
 
-        # 採用安全的圖片來源
+        # 設定大圖預覽
         thumb_url = stream_data.get("safe_thumb_url", avatar_url)
         if thumb_url:
             embed.set_image(url=thumb_url)
@@ -223,7 +221,7 @@ class StreamCog(commands.Cog):
             except Exception as e:
                 print(f"關台更新失敗: {e}")
 
-    # 管理員測試指令（已加入智慧檢查）
+    # 管理員測試指令
     @app_commands.command(
         name="test_stream", description="測試開台通知卡片"
     )
@@ -240,17 +238,9 @@ class StreamCog(commands.Cog):
 
         stream_url = f"https://www.twitch.tv/{TWITCH_CHANNEL_NAME}"
         timestamp = int(datetime.datetime.now().timestamp())
-        raw_thumb_url = f"https://static-cdn.jtvnw.net/previews-img/live_user_{TWITCH_CHANNEL_NAME}-1280x720.jpg"
         
-        # 📌 測試指令也加入智慧 HEAD 檢查
-        thumb_url = None
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.head(raw_thumb_url) as resp:
-                    if resp.status == 200:
-                        thumb_url = f"{raw_thumb_url}?t={timestamp}"
-        except Exception:
-            pass
+        # 📌 測試指令直接拼接大圖
+        thumb_url = f"https://static-cdn.jtvnw.net/previews-img/live_user_{TWITCH_CHANNEL_NAME.lower()}-1280x720.jpg?t={timestamp}"
 
         embed = discord.Embed(
             title="🌴 霓夜台 | 直播即時狀態",
@@ -274,11 +264,12 @@ class StreamCog(commands.Cog):
         embed.set_footer(text=f"streamcord.io • Updated every minute • {datetime.datetime.now().strftime('%p %I:%M')}")
 
         view = StreamView(TWITCH_CHANNEL_NAME)
+        # 🌟 測試訊息一樣加上 < >
         await channel.send(
-            content=f"@everyone\n準備狗叫啦~\n{stream_url}", embed=embed, view=view
+            content=f"@everyone\n準備狗叫啦~\n<{stream_url}>", embed=embed, view=view
         )
         await interaction.followup.send(
-            "✅ 測試卡片發送成功！"
+            "✅ 測試卡片發送成功！去公告頻道看看吧！"
         )
 
 
