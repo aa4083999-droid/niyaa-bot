@@ -90,25 +90,54 @@ class BoardGameSelectView(discord.ui.View):
 
 # ==================== 桌遊揪團按鈕 UI ====================
 class PartyView(discord.ui.View):
-    def __init__(self, game_name, max_players):
+    def __init__(self, game_name, max_players, organizer):
         super().__init__(timeout=None)
         self.game_name = game_name
         self.max_players = max_players
-        self.players = []
+        self.players = [organizer]  # 發起人自動加入
+        self.organizer = organizer
 
     @discord.ui.button(label="➕ 參加 (Join)", style=discord.ButtonStyle.success)
     async def join(self, interaction: discord.Interaction, button: discord.ui.Button):
         user = interaction.user
+        
+        # ✅ 檢查是否已滿人
+        if len(self.players) >= self.max_players:
+            await interaction.response.send_message(
+                f"❌ 人數已滿 ({len(self.players)}/{self.max_players})，無法加入！",
+                ephemeral=True
+            )
+            return
+        
         if user in self.players:
             await interaction.response.send_message("⚠️ 你已經在車隊裡囉！", ephemeral=True)
             return
 
         self.players.append(user)
-        await self.update_embed(interaction)
+        
+        # ✅ 人數滿時提示
+        if len(self.players) == self.max_players:
+            embed = await self._create_embed()
+            embed.title = f"🎉 {embed.title}"
+            embed.description = f"**當前人數**：`{len(self.players)} / {self.max_players}` ✅ **人數已滿！**\n\n**已加入玩家：**\n" + \
+                              "\n".join([f"• {p.mention}" for p in self.players])
+            await interaction.response.edit_message(embed=embed, view=self)
+        else:
+            await self.update_embed(interaction)
 
     @discord.ui.button(label="➖ 退出 (Leave)", style=discord.ButtonStyle.danger)
     async def leave(self, interaction: discord.Interaction, button: discord.ui.Button):
         user = interaction.user
+        
+        # ✅ 發起人無法退出
+        if user == self.organizer and len(self.players) > 1:
+            await interaction.response.send_message(
+                "⚠️ 作為遊戲發起人，如果你要退出請解散遊戲。\n"
+                "請使用 `/boardgame_party` 重新發起新的揪團。",
+                ephemeral=True
+            )
+            return
+        
         if user not in self.players:
             await interaction.response.send_message("⚠️ 你本來就還沒加入喔！", ephemeral=True)
             return
@@ -116,7 +145,39 @@ class PartyView(discord.ui.View):
         self.players.remove(user)
         await self.update_embed(interaction)
 
-    async def update_embed(self, interaction: discord.Interaction):
+    @discord.ui.button(label="🎮 開始遊戲 (Start)", style=discord.ButtonStyle.primary)
+    async def start_game(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # ✅ 只有發起人可以開始遊戲
+        if interaction.user != self.organizer:
+            await interaction.response.send_message(
+                "⚠️ 只有遊戲發起人才能開始遊戲！",
+                ephemeral=True
+            )
+            return
+        
+        # ✅ 檢查最少人數
+        if len(self.players) < 2:
+            await interaction.response.send_message(
+                "❌ 至少需要 2 人以上才能開始遊戲！",
+                ephemeral=True
+            )
+            return
+
+        player_mentions = "、".join([p.mention for p in self.players])
+        embed = discord.Embed(
+            title=f"🎮 {self.game_name} - 遊戲開始！",
+            description=f"參與玩家 ({len(self.players)} 人)：\n{player_mentions}\n\n祝各位遊戲愉快！🎉",
+            color=discord.Color.green()
+        )
+        await interaction.response.send_message(embed=embed)
+        
+        # ✅ 遊戲開始後禁用按鈕
+        self.join.disabled = True
+        self.leave.disabled = True
+        self.start_game.disabled = True
+        await interaction.edit_original_response(view=self)
+
+    async def _create_embed(self):
         player_list_str = "\n".join([f"• {p.mention}" for p in self.players]) if self.players else "*目前還沒有人加入*"
         
         embed = discord.Embed(
@@ -124,6 +185,10 @@ class PartyView(discord.ui.View):
             description=f"**當前人數**：`{len(self.players)} / {self.max_players}`\n\n**已加入玩家：**\n{player_list_str}",
             color=discord.Color.blue()
         )
+        return embed
+
+    async def update_embed(self, interaction: discord.Interaction):
+        embed = await self._create_embed()
         await interaction.response.edit_message(embed=embed, view=self)
 
 
@@ -145,31 +210,107 @@ class BoardGameCog(commands.Cog):
 
     # 2. 發起揪團指令
     @app_commands.command(name="boardgame_party", description="發起一個桌遊揪團卡片")
-    @app_commands.describe(game="遊戲名稱（例如：阿瓦隆/UNO/牛頭王）", max_players="預計招募人數")
+    @app_commands.describe(
+        game="遊戲名稱（例如：阿瓦隆/UNO/牛頭王/蟑螂）",
+        max_players="預計招募人數 (2-10 人)"
+    )
     async def boardgame_party(self, interaction: discord.Interaction, game: str, max_players: int = 6):
+        # ✅ 驗證人數範圍
+        if not 2 <= max_players <= 10:
+            await interaction.response.send_message(
+                "❌ 人數必須在 2-10 之間！",
+                ephemeral=True
+            )
+            return
+        
+        # ✅ 驗證遊戲名稱不為空
+        if not game or len(game.strip()) == 0:
+            await interaction.response.send_message(
+                "❌ 遊戲名稱不能為空！",
+                ephemeral=True
+            )
+            return
+
         embed = discord.Embed(
             title=f"🎲 桌遊揪團囉：{game}",
-            description=f"**當前人數**：`0 / {max_players}`\n\n**已加入玩家：**\n*目前還沒有人加入*",
+            description=f"**當前人數**：`1 / {max_players}`（發起人：{interaction.user.mention}）\n\n**已加入玩家：**\n• {interaction.user.mention}",
             color=discord.Color.blue()
         )
-        view = PartyView(game_name=game, max_players=max_players)
-        await interaction.response.send_message(content="@everyone 開打桌遊囉！", embed=embed, view=view)
+        embed.set_footer(text="提示：點擊「開始遊戲」按鈕時，所有玩家必須已確認加入。")
+        
+        view = PartyView(game_name=game, max_players=max_players, organizer=interaction.user)
+        await interaction.response.send_message(
+            content=f"@everyone {interaction.user.mention} 開打桌遊囉！",
+            embed=embed,
+            view=view
+        )
 
     # 3. 抽 UNO 牌指令（娛樂用）
     @app_commands.command(name="uno_draw", description="隨機抽取一張 UNO 卡牌！")
     async def uno_draw(self, interaction: discord.Interaction):
-        colors = ["🔴 紅色", "🟡 黃色", "🟢 綠色", "🔵 藍色"]
+        colors = [
+            {"name": "🔴 紅色", "color": discord.Color.red()},
+            {"name": "🟡 黃色", "color": discord.Color.yellow()},
+            {"name": "🟢 綠色", "color": discord.Color.green()},
+            {"name": "🔵 藍色", "color": discord.Color.blue()}
+        ]
+        
         numbers = [str(i) for i in range(0, 10)] + ["Skip (跳過)", "Reverse (反轉)", "+2 (罰抽2張)"]
-        special_cards = ["🌈 Wild (換色卡)", "🔥 Wild +4 (強迫+4與換色)"]
+        
+        special_cards = [
+            {"name": "🌈 Wild (換色卡)", "desc": "可以指定任何顏色"},
+            {"name": "🔥 Wild +4 (強迫+4與換色)", "desc": "下家罰抽4張 + 換色"}
+        ]
 
         if random.random() < 0.15:  # 15% 機率抽到王牌
             card = random.choice(special_cards)
+            embed = discord.Embed(
+                title="🃏 UNO 卡牌抽取",
+                description=f"{interaction.user.mention} 抽到了一張特殊卡：\n\n**{card['name']}**\n\n{card['desc']}",
+                color=discord.Color.gold()
+            )
         else:
-            color = random.choice(colors)
+            color_info = random.choice(colors)
             num = random.choice(numbers)
-            card = f"{color} - {num}"
+            embed = discord.Embed(
+                title="🃏 UNO 卡牌抽取",
+                description=f"{interaction.user.mention} 抽到了：\n\n**{color_info['name']} - {num}**",
+                color=color_info['color']
+            )
 
-        await interaction.response.send_message(f"🃏 {interaction.user.mention} 抽到了：**{card}**！")
+        embed.set_footer(text="這是娛樂功能，結果純隨機！")
+        await interaction.response.send_message(embed=embed)
+
+    # 4. 骰子指令（補充娛樂功能）
+    @app_commands.command(name="dice", description="擲骰子！(1-6)")
+    async def dice(self, interaction: discord.Interaction):
+        result = random.randint(1, 6)
+        dice_faces = ["⚀", "⚁", "⚂", "⚃", "⚄", "⚅"]
+        
+        embed = discord.Embed(
+            title="🎲 骰子結果",
+            description=f"{interaction.user.mention} 擲出：\n\n# {dice_faces[result - 1]} {result}",
+            color=discord.Color.random()
+        )
+        await interaction.response.send_message(embed=embed)
+
+    # 5. 隨機選擇器指令（幫助決定玩什麼）
+    @app_commands.command(name="pick_game", description="隨機選擇一個桌遊！")
+    async def pick_game(self, interaction: discord.Interaction):
+        games = ["阿瓦隆", "誰是牛頭王", "UNO", "德國蟑螂"]
+        picked = random.choice(games)
+        
+        embed = discord.Embed(
+            title="🎮 隨機遊戲選擇",
+            description=f"{interaction.user.mention} 的推薦遊戲是：\n\n# {picked}",
+            color=discord.Color.random()
+        )
+        await interaction.response.send_message(embed=embed)
+
+
+async def setup(bot):
+    await bot.add_cog(BoardGameCog(bot))
+
 
 
 async def setup(bot):
