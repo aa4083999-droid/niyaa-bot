@@ -134,7 +134,7 @@ class PartyView(discord.ui.View):
             embed = await self._create_embed()
             embed.title = f"🎉 {embed.title}"
             embed.description = f"**當前人數**：`{len(self.players)} / {self.max_players}` ✅ **人數已滿！**\n\n**已加入玩家：**\n" + \
-                                    "\n".join([f"• {p.mention}" for p in self.players])
+                                                "\n".join([f"• {p.mention}" for p in self.players])
             await interaction.response.edit_message(embed=embed, view=self)
         else:
             await self.update_embed(interaction)
@@ -249,7 +249,7 @@ class BoardGameCog(commands.Cog):
 
         embed = discord.Embed(
             title=f"🎲 桌遊揪團囉：{game}",
-            description=f"**當前人數**：`1 / {max_players}`（發起人：{interaction.user.mention}）\n\n**已加入玩家：\n• {interaction.user.mention}",
+            description=f"**當前人數**：`1 / {max_players}`（發起人：{interaction.user.mention}）\n\n已加入玩家：\n• {interaction.user.mention}",
             color=discord.Color.blue()
         )
         embed.set_footer(text="提示：點擊「開始遊戲」按鈕時，所有玩家必須已確認加入。")
