@@ -14,18 +14,17 @@ logger = logging.getLogger(__name__)
 
 # ==================== 從環境變數讀取設定 ====================
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
+
+# 改成預設為 0，允許啟動時先不填
 WELCOME_CHANNEL_ID = int(os.getenv("WELCOME_CHANNEL_ID", 0))
 MOD_CHANNEL_ID = int(os.getenv("MOD_CHANNEL_ID", 0))
 
-# 驗證必要的環境變數
 if not DISCORD_TOKEN:
     raise ValueError("❌ 請在環境變數中設定 DISCORD_TOKEN")
-if WELCOME_CHANNEL_ID == 0:
-    raise ValueError("❌ 請在環境變數中設定 WELCOME_CHANNEL_ID")
 
 print("🔍 DISCORD_TOKEN: ✅ 已設定")
-print(f"🔍 WELCOME_CHANNEL_ID: {'✅ 已設定' if WELCOME_CHANNEL_ID != 0 else '❌ 未設定'}")
-print(f"🔍 MOD_CHANNEL_ID: {'✅ 已設定' if MOD_CHANNEL_ID != 0 else '❌ 未設定'}")
+print(f"🔍 動態歡迎頻道 ID: {WELCOME_CHANNEL_ID if WELCOME_CHANNEL_ID != 0 else '⚠️ 尚未設定（請稍後在 DC 使用指令設定）'}")
+print(f"🔍 動態日誌頻道 ID: {MOD_CHANNEL_ID if MOD_CHANNEL_ID != 0 else '⚠️ 尚未設定（選填）'}")
 print("✅ [Config] 環境變數已成功載入\n")
 # ============================================================
 
@@ -39,14 +38,38 @@ BANNED_WORDS = [
     "badword1",
     "badword2",
     "inappropriate",
-    # 在這裡添加更多禁用詞
 ]
 
-# 豁免的使用者 ID（例如：管理員、機器人）
+# 豁免的使用者 ID
 EXEMPT_USERS = []
 
 # 豁免的頻道 ID
 EXEMPT_CHANNELS = []
+# ============================================================
+
+# ==================== 全域配置變數（可動態修改） ====================
+class ConfigManager:
+    """配置管理器，允許動態修改頻道 ID"""
+    _welcome_channel_id = WELCOME_CHANNEL_ID
+    _mod_channel_id = MOD_CHANNEL_ID
+    
+    @classmethod
+    def get_welcome_channel_id(cls) -> int:
+        return cls._welcome_channel_id
+    
+    @classmethod
+    def set_welcome_channel_id(cls, channel_id: int) -> None:
+        cls._welcome_channel_id = channel_id
+        logger.info(f"✅ 歡迎頻道 ID 已更新為：{channel_id}")
+    
+    @classmethod
+    def get_mod_channel_id(cls) -> int:
+        return cls._mod_channel_id
+    
+    @classmethod
+    def set_mod_channel_id(cls, channel_id: int) -> None:
+        cls._mod_channel_id = channel_id
+        logger.info(f"✅ 日誌頻道 ID 已更新為：{channel_id}")
 # ============================================================
 
 
@@ -61,10 +84,8 @@ class ModerationCog(commands.Cog):
     def is_word_in_text(self, text, word):
         """
         智慧關鍵字檢查（大小寫不敏感 + 單詞邊界檢查）
-        避免簡單的字符串匹配導致的誤判
         """
         text_lower = text.lower()
-        # 使用正則表達式確保單詞邊界匹配
         pattern = r'\b' + re.escape(word) + r'\b'
         return re.search(pattern, text_lower) is not None
 
@@ -72,19 +93,15 @@ class ModerationCog(commands.Cog):
     async def on_message(self, message: discord.Message):
         """監聽所有訊息並檢查禁用詞"""
         
-        # 避免機器人自己回覆自己造成無限迴圈
         if message.author == self.bot.user:
             return
         
-        # 檢查是否為機器人訊息
         if message.author.bot:
             return
         
-        # 檢查頻道是否被豁免
         if message.channel.id in EXEMPT_CHANNELS:
             return
         
-        # 檢查使用者是否被豁免
         if message.author.id in EXEMPT_USERS:
             return
         
@@ -97,13 +114,11 @@ class ModerationCog(commands.Cog):
         
         if found_banned_word:
             try:
-                # 刪除違規訊息
                 await message.delete()
                 logger.warning(
                     f"❌ [Filter] {message.author} 在 #{message.channel.name} 使用了禁用詞: '{found_banned_word}'"
                 )
                 
-                # 發送警告訊息
                 warning_embed = discord.Embed(
                     title="⚠️ 訊息已刪除",
                     description=f"{message.author.mention} 請注意用詞\n\n**原因**：使用了不適當的語言",
@@ -112,9 +127,10 @@ class ModerationCog(commands.Cog):
                 warning_embed.set_footer(text="如有疑問，請聯繫管理員")
                 await message.channel.send(embed=warning_embed, delete_after=10)
                 
-                # 如果設定了 MOD_CHANNEL_ID，發送到版主頻道
-                if MOD_CHANNEL_ID != 0:
-                    mod_channel = self.bot.get_channel(MOD_CHANNEL_ID)
+                # 發送到版主頻道
+                mod_channel_id = ConfigManager.get_mod_channel_id()
+                if mod_channel_id != 0:
+                    mod_channel = self.bot.get_channel(mod_channel_id)
                     if mod_channel:
                         log_embed = discord.Embed(
                             title="🚨 訊息過濾日誌",
@@ -134,6 +150,40 @@ class ModerationCog(commands.Cog):
 
     # ==================== 管理 Slash Commands ====================
     
+    @app_commands.command(
+        name="set_welcome_channel",
+        description="設定歡迎頻道（僅管理員可用）"
+    )
+    @app_commands.checks.has_permissions(administrator=True)
+    async def set_welcome_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        """設定歡迎頻道 ID"""
+        
+        ConfigManager.set_welcome_channel_id(channel.id)
+        
+        embed = discord.Embed(
+            title="✅ 歡迎頻道已設定",
+            description=f"歡迎卡片將發送到：{channel.mention}",
+            color=discord.Color.green()
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(
+        name="set_mod_channel",
+        description="設定日誌頻道（僅管理員可用）"
+    )
+    @app_commands.checks.has_permissions(administrator=True)
+    async def set_mod_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        """設定日誌/版主頻道 ID"""
+        
+        ConfigManager.set_mod_channel_id(channel.id)
+        
+        embed = discord.Embed(
+            title="✅ 日誌頻道已設定",
+            description=f"違規訊息日誌將發送到：{channel.mention}",
+            color=discord.Color.green()
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
     @app_commands.command(
         name="add_ban_word",
         description="添加一個禁用詞（僅管理員可用）"
@@ -266,21 +316,101 @@ class ModerationCog(commands.Cog):
         await interaction.response.send_message(embed=embed, ephemeral=True)
         logger.info(f"✅ [Admin] {channel.name} 已添加到豁免列表")
 
+    @app_commands.command(
+        name="config_status",
+        description="查看目前的配置狀態（僅管理員可用）"
+    )
+    @app_commands.checks.has_permissions(administrator=True)
+    async def config_status(self, interaction: discord.Interaction):
+        """查看配置狀態"""
+        
+        welcome_id = ConfigManager.get_welcome_channel_id()
+        mod_id = ConfigManager.get_mod_channel_id()
+        
+        embed = discord.Embed(
+            title="⚙️ 配置狀態",
+            color=discord.Color.blue()
+        )
+        
+        # 歡迎頻道
+        if welcome_id != 0:
+            try:
+                welcome_channel = self.bot.get_channel(welcome_id)
+                if welcome_channel:
+                    embed.add_field(
+                        name="✅ 歡迎頻道",
+                        value=f"{welcome_channel.mention}",
+                        inline=False
+                    )
+                else:
+                    embed.add_field(
+                        name="⚠️ 歡迎頻道",
+                        value=f"頻道 ID: {welcome_id}（找不到該頻道）",
+                        inline=False
+                    )
+            except:
+                embed.add_field(
+                    name="⚠️ 歡迎頻道",
+                    value=f"頻道 ID: {welcome_id}",
+                    inline=False
+                )
+        else:
+            embed.add_field(
+                name="❌ 歡迎頻道",
+                value="尚未設定，使用 `/set_welcome_channel` 設定",
+                inline=False
+            )
+        
+        # 日誌頻道
+        if mod_id != 0:
+            try:
+                mod_channel = self.bot.get_channel(mod_id)
+                if mod_channel:
+                    embed.add_field(
+                        name="✅ 日誌頻道",
+                        value=f"{mod_channel.mention}",
+                        inline=False
+                    )
+                else:
+                    embed.add_field(
+                        name="⚠️ 日誌頻道",
+                        value=f"頻道 ID: {mod_id}（找不到該頻道）",
+                        inline=False
+                    )
+            except:
+                embed.add_field(
+                    name="⚠️ 日誌頻道",
+                    value=f"頻道 ID: {mod_id}",
+                    inline=False
+                )
+        else:
+            embed.add_field(
+                name="ℹ️ 日誌頻道",
+                value="未設定（選填），使用 `/set_mod_channel` 設定",
+                inline=False
+            )
+        
+        # 禁用詞統計
+        embed.add_field(
+            name="📋 禁用詞",
+            value=f"共 {len(self.banned_words)} 個禁用詞已配置",
+            inline=False
+        )
+        
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
 
 class WelcomeCog(commands.Cog):
     """歡迎卡片系統 Cog"""
     
     def __init__(self, bot):
         self.bot = bot
-        # Semaphore 放在 Cog 內部，避免 Event Loop 綁定問題
         self.pillow_semaphore = asyncio.Semaphore(3)
         
-        # 記憶體快取變數
         self._cached_background: bytes | None = None
         self._cached_font_title: ImageFont.FreeTypeFont | ImageFont.ImageFont | None = None
         self._cached_font_sub: ImageFont.FreeTypeFont | ImageFont.ImageFont | None = None
 
-        # 初始化時載入資產並建立快取
         self._load_assets()
         logger.info("✅ [Cog] WelcomeCog 已載入")
 
@@ -292,7 +422,6 @@ class WelcomeCog(commands.Cog):
         bg_path = os.path.join(root_dir, DOG_BG_IMAGE_FILENAME)
         font_path_zh = os.path.join(root_dir, FONT_FILENAME)
 
-        # 1. 快取背景圖片 bytes
         try:
             if os.path.exists(bg_path):
                 with open(bg_path, "rb") as f:
@@ -303,7 +432,6 @@ class WelcomeCog(commands.Cog):
         except Exception as e:
             logger.error(f"❌ 載入背景圖片時發生錯誤: {e}", exc_info=True)
 
-        # 2. 預先建立字型物件快取
         try:
             if os.path.exists(font_path_zh):
                 self._cached_font_title = ImageFont.truetype(font_path_zh, 32)
@@ -322,7 +450,6 @@ class WelcomeCog(commands.Cog):
         """使用 Pillow 進行同步的圖片合成工作"""
         width, height = 800, 400
 
-        # 1. 載入背景
         if self._cached_background:
             try:
                 with Image.open(io.BytesIO(self._cached_background)) as bg:
@@ -333,27 +460,22 @@ class WelcomeCog(commands.Cog):
         else:
             base_img = Image.new("RGBA", (width, height), (30, 30, 45, 255))
 
-        # 加上一層半透明黑色遮罩
         overlay = Image.new("RGBA", (width, height), (0, 0, 0, 100))
         card = Image.alpha_composite(base_img, overlay)
 
-        # 2. 處理使用者大頭貼
         if avatar_bytes:
             try:
                 with Image.open(io.BytesIO(avatar_bytes)) as avatar_img:
                     avatar_img = avatar_img.convert("RGBA")
                     avatar_img = avatar_img.resize((150, 150), Image.Resampling.LANCZOS)
 
-                    # 製作圓形遮罩
                     mask = Image.new("L", (150, 150), 0)
                     draw_mask = ImageDraw.Draw(mask)
                     draw_mask.ellipse((0, 0, 150, 150), fill=255)
 
-                    # 貼上圓形頭貼
                     avatar_x, avatar_y = (width - 150) // 2, 45
                     card.paste(avatar_img, (avatar_x, avatar_y), mask)
 
-                    # 加上外框
                     draw = ImageDraw.Draw(card)
                     draw.ellipse(
                         (
@@ -368,16 +490,13 @@ class WelcomeCog(commands.Cog):
             except Exception as e:
                 logger.warning(f"⚠️ 處理頭貼繪製時發生錯誤: {e}")
 
-        # 3. 寫入文字
         draw = ImageDraw.Draw(card)
         font_title = self._cached_font_title or ImageFont.load_default()
         font_sub = self._cached_font_sub or ImageFont.load_default()
 
-        # 長暱稱限制
         if len(display_name) > 25:
             display_name = display_name[:25] + "..."
 
-        # 歡迎文字
         text_welcome = f"歡迎 {display_name} 狗勾"
         bbox_title = draw.textbbox((0, 0), text_welcome, font=font_title)
         w_title = bbox_title[2] - bbox_title[0]
@@ -390,7 +509,6 @@ class WelcomeCog(commands.Cog):
             stroke_fill=(0, 0, 0),
         )
 
-        # 副標題
         text_sub = "期待你在霓夜的狗窩裡玩得開心！"
         bbox_sub = draw.textbbox((0, 0), text_sub, font=font_sub)
         w_sub = bbox_sub[2] - bbox_sub[0]
@@ -409,20 +527,25 @@ class WelcomeCog(commands.Cog):
         return output.getvalue()
 
     async def _get_welcome_channel(self) -> discord.abc.Messageable | None:
-        """取得歡迎頻道，檢查型態並支援 API Fallback"""
-        channel = self.bot.get_channel(WELCOME_CHANNEL_ID)
+        """取得歡迎頻道"""
+        welcome_channel_id = ConfigManager.get_welcome_channel_id()
+        
+        if welcome_channel_id == 0:
+            logger.warning("⚠️ 歡迎頻道未設定，請使用 `/set_welcome_channel` 設定")
+            return None
+        
+        channel = self.bot.get_channel(welcome_channel_id)
         if channel is None:
             try:
                 channel = await asyncio.wait_for(
-                    self.bot.fetch_channel(WELCOME_CHANNEL_ID), timeout=30.0
+                    self.bot.fetch_channel(welcome_channel_id), timeout=30.0
                 )
             except Exception as e:
-                logger.error(f"❌ 無法透過 API 取得歡迎頻道 {WELCOME_CHANNEL_ID}: {e}")
+                logger.error(f"❌ 無法透過 API 取得歡迎頻道 {welcome_channel_id}: {e}")
                 return None
 
-        # 檢查頻道型態
         if not isinstance(channel, (discord.TextChannel, discord.Thread, discord.VoiceChannel)):
-            logger.error(f"❌ 取得的頻道 ID {WELCOME_CHANNEL_ID} 不是支援訊息發送的頻道型態")
+            logger.error(f"❌ 取得的頻道 ID {welcome_channel_id} 不是支援訊息發送的頻道型態")
             return None
 
         return channel
@@ -431,23 +554,21 @@ class WelcomeCog(commands.Cog):
         """核心歡迎卡片生成與發送流程"""
         channel = await self._get_welcome_channel()
         if not channel:
-            logger.error("❌ 找不到可用的歡迎頻道，無法發送歡迎訊息")
+            logger.warning(f"⚠️ 無法為成員 {member.id} 發送歡迎訊息，歡迎頻道未設定或不可用")
             return False
 
         intro_text = f"{member.mention}，歡迎來到 **霓夜的狗窩** 😍\n"
 
-        # 頭貼下載失敗降級處理
         avatar_bytes = b""
         try:
             avatar_asset = member.display_avatar.with_size(256)
             avatar_bytes = await asyncio.wait_for(avatar_asset.read(), timeout=15.0)
         except Exception as e:
-            logger.warning(f"⚠️ 下載使用者 {member.id} 頭貼失敗或逾時（將以無頭貼模式繼續）: {e}")
+            logger.warning(f"⚠️ 下載使用者 {member.id} 頭貼失敗或逾時: {e}")
 
         display_name = getattr(member, "display_name", member.name)
 
         try:
-            # 透過 Semaphore 限制併發
             async with self.pillow_semaphore:
                 card_bytes = await asyncio.to_thread(
                     self._generate_card_sync, avatar_bytes, display_name
@@ -458,7 +579,6 @@ class WelcomeCog(commands.Cog):
 
         file = discord.File(io.BytesIO(card_bytes), filename="welcome_card.png")
 
-        # 傳送訊息超時保護
         try:
             await asyncio.wait_for(
                 channel.send(content=intro_text, file=file),
@@ -487,12 +607,11 @@ class WelcomeCog(commands.Cog):
         channel = await self._get_welcome_channel()
         if not channel:
             await interaction.followup.send(
-                "❌ 找不到設定的歡迎頻道 ID，或該頻道不支援訊息發送！",
+                "❌ 找不到設定的歡迎頻道，請使用 `/set_welcome_channel` 設定！",
                 ephemeral=True
             )
             return
 
-        # 取得完整的 discord.Member
         member = interaction.user
         if interaction.guild and not isinstance(member, discord.Member):
             try:
@@ -500,9 +619,8 @@ class WelcomeCog(commands.Cog):
                     interaction.guild.fetch_member(interaction.user.id), timeout=10.0
                 )
             except Exception as e:
-                logger.warning(f"⚠️ 無法取得完整的 Member 物件，退回使用互動使用者: {e}")
+                logger.warning(f"⚠️ 無法取得完整的 Member 物件: {e}")
 
-        # 執行測試發送
         success = await self.send_welcome_process(member)
         
         if success:
@@ -528,7 +646,7 @@ async def setup_bot():
     
     @bot.event
     async def on_ready():
-        print(f"✅ Bot 已連接為：{bot.user}")
+        print(f"\n✅ Bot 已連接為：{bot.user}")
         print(f"✅ 監控的伺服器數：{len(bot.guilds)}")
         try:
             synced = await bot.tree.sync()
