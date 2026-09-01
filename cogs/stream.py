@@ -24,7 +24,7 @@ if not TWITCH_CLIENT_ID or not TWITCH_CLIENT_SECRET:
 if ANNOUNCE_CHANNEL_ID == 0:
     raise ValueError("❌ 請在環境變數或 Secrets 中設定 ANNOUNCE_CHANNEL_ID")
 
-print("✅ [Config] 環境變數已成功載入")
+print("✅ [Config] Twitch 環境變數已成功載入")
 # ============================================================
 
 
@@ -64,7 +64,7 @@ class StreamCog(commands.Cog):
                 if resp.status == 200:
                     data = await resp.json()
                     self.access_token = data.get("access_token")
-                    print(f"✅ [Token] 成功獲取 Twitch 訪問令牌")
+                    print("✅ [Token] 成功獲取 Twitch 訪問令牌")
                 else:
                     print(f"❌ [Token] 獲取失敗: {resp.status}")
 
