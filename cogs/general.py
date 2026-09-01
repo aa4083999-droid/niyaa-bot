@@ -154,13 +154,16 @@ class GeneralCog(commands.Cog):
 
     @tasks.loop(hours=1.0)
     async def refresh_role_message_loop(self):
-        """每小時自動更新面板訊息，採用 edit 避免刪除重發造成面板憑空消失"""
+        """每小時自動更新面板訊息，若頻道或訊息失效則自動清理"""
         for guild_id, data in list(self.role_panels.items()):
             guild = self.bot.get_guild(guild_id)
             if not guild:
                 continue
+            
             channel = guild.get_channel(data["channel_id"])
             if not channel:
+                # 頻道已不存在，自動清除失效紀錄
+                self.role_panels.pop(guild_id, None)
                 continue
 
             if data["message_id"]:
@@ -169,7 +172,7 @@ class GeneralCog(commands.Cog):
                     view = RoleSelectionView(stream_role_id=data["stream_role_id"], rpg_role_id=data["rpg_role_id"])
                     await old_msg.edit(content="歡迎進入霓夜的狗窩~領取身分組哦~", view=view)
                 except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                    # 若訊息被刪除或找不到，則重新發送一則
+                    # 若訊息被刪除或沒有權限，嘗試重新發送
                     try:
                         view = RoleSelectionView(stream_role_id=data["stream_role_id"], rpg_role_id=data["rpg_role_id"])
                         new_msg = await channel.send(content="歡迎進入霓夜的狗窩~領取身分組哦~", view=view)
