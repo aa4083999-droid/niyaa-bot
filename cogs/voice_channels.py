@@ -1,313 +1,237 @@
-import datetime
-import os
-import aiohttp
+import asyncio
+import logging
+import time
+
 import discord
-from discord import app_commands
 from discord.ext import commands, tasks
 
-# ==================== 從環境變數讀取設定 ====================
-TWITCH_CLIENT_ID = os.getenv("TWITCH_CLIENT_ID")
-TWITCH_CLIENT_SECRET = os.getenv("TWITCH_CLIENT_SECRET")
-TWITCH_CHANNEL_NAME = os.getenv("TWITCH_CHANNEL_NAME", "niyaa0123")
+log = logging.getLogger(__name__)
 
-try:
-    ANNOUNCE_CHANNEL_ID = int(os.getenv("ANNOUNCE_CHANNEL_ID", 0))
-except ValueError:
-    ANNOUNCE_CHANNEL_ID = 0
+# ==================== 配置區域 ====================
+TRIGGER_CHANNEL_ID = 1510980890682200124  # 觸發創房的語音頻道 ID
+REST_CHANNEL_ID = 1517983383052091523     # 休息區 / AFK 語音頻道 ID
 
-print(f"🔍 TWITCH_CLIENT_ID: {'✅ 已設定' if TWITCH_CLIENT_ID else '❌ 未設定'}")
-print(f"🔍 TWITCH_CLIENT_SECRET: {'✅ 已設定' if TWITCH_CLIENT_SECRET else '❌ 未設定'}")
-print(f"🔍 ANNOUNCE_CHANNEL_ID: {'✅ 已設定' if ANNOUNCE_CHANNEL_ID != 0 else '❌ 未設定'}")
-
-if not TWITCH_CLIENT_ID or not TWITCH_CLIENT_SECRET:
-    raise ValueError("❌ 請在環境變數或 Secrets 中設定 TWITCH_CLIENT_ID 和 TWITCH_CLIENT_SECRET")
-if ANNOUNCE_CHANNEL_ID == 0:
-    raise ValueError("❌ 請在環境變數或 Secrets 中設定 ANNOUNCE_CHANNEL_ID")
-
-print("✅ [Config] Twitch 環境變數已成功載入")
-# ============================================================
+# 3 秒輪詢與 10 秒門檻
+MUTE_CHECK_INTERVAL = 3.0
+MUTE_TIMEOUT = 10.0
+TEMP_CHANNEL_PREFIX = "🔊 "
+# ===================================================
 
 
-class StreamView(discord.ui.View):
-    def __init__(self, channel_name):
-        super().__init__(timeout=None)
-        stream_url = f"https://www.twitch.tv/{channel_name}"
-        self.add_item(
-            discord.ui.Button(
-                label="前往 Twitch 觀看",
-                url=stream_url,
-                style=discord.ButtonStyle.link,
-            )
-        )
+class TempVoiceCog(commands.Cog):
+    """建立臨時語音頻道，並將長時間靜音的成員移至休息區。"""
 
-
-class StreamCog(commands.Cog):
-    def __init__(self, bot):
+    def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.access_token = None
-        self.last_notified_stream_id = None  # 記錄已經發過通知的直播 ID
-        self.last_msg_id = None
-        self.check_twitch_live.start()
+
+        # 使用 monotonic 時鐘記錄開始靜音時間，避免系統時間調整影響計時。
+        self.mute_started_at: dict[tuple[int, int], float] = {}
+
+        # 記錄本次啟動期間由本 Cog 建立的頻道。
+        self.temp_channel_ids: set[int] = set()
+
+        # 避免同時建立多個 Discord 頻道。
+        self._create_lock = asyncio.Lock()
+
+        # 避免多個離開事件同時刪除同一個頻道。
+        self._delete_lock = asyncio.Lock()
+
+        # 防止同一位使用者因 Gateway 重複事件重複建立房間。
+        self._creating_for: set[tuple[int, int]] = set()
+
+        self.check_afk_loop.start()
+        log.info("TempVoiceCog 已啟動（驗收模式：3秒輪詢 / 10秒靜音門檻）")
 
     def cog_unload(self):
-        self.check_twitch_live.cancel()
+        self.check_afk_loop.cancel()
 
-    async def get_twitch_token(self):
-        url = "https://id.twitch.tv/oauth2/token"
-        params = {
-            "client_id": TWITCH_CLIENT_ID,
-            "client_secret": TWITCH_CLIENT_SECRET,
-            "grant_type": "client_credentials",
-        }
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, params=params) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    self.access_token = data.get("access_token")
-                    print("✅ [Token] 成功獲取 Twitch 訪問令牌")
-                else:
-                    print(f"❌ [Token] 獲取失敗: {resp.status}")
+    def _is_temp_channel(
+        self,
+        channel: discord.abc.GuildChannel | None,
+    ) -> bool:
+        if channel is None or channel.id == TRIGGER_CHANNEL_ID:
+            return False
+        return channel.id in self.temp_channel_ids
 
-    @tasks.loop(minutes=1.5)
-    async def check_twitch_live(self):
-        if not self.access_token:
-            await self.get_twitch_token()
+    @staticmethod
+    def _mute_key(member: discord.Member) -> tuple[int, int]:
+        return member.guild.id, member.id
 
-        url = f"https://api.twitch.tv/helix/streams?user_login={TWITCH_CHANNEL_NAME}"
-        headers = {
-            "Client-ID": TWITCH_CLIENT_ID,
-            "Authorization": f"Bearer {self.access_token}",
-        }
-        user_url = f"https://api.twitch.tv/helix/users?login={TWITCH_CHANNEL_NAME}"
-
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers) as resp:
-                if resp.status == 401:
-                    print("⚠️ [Check] Token 過期，重新獲取...")
-                    await self.get_twitch_token()
-                    return
-
-                if resp.status == 200:
-                    data = await resp.json()
-                    streams = data.get("data", [])
-
-                    avatar_url = None
-                    async with session.get(user_url, headers=headers) as user_resp:
-                        if user_resp.status == 200:
-                            user_data = await user_resp.json()
-                            users = user_data.get("data", [])
-                            if users:
-                                avatar_url = users[0].get("profile_image_url")
-
-                    if streams:
-                        current_stream = streams[0]
-                        current_stream_id = current_stream.get("id")
-                        
-                        thumbnail_url = current_stream.get("thumbnail_url", "")
-                        timestamp = int(datetime.datetime.now().timestamp())
-                        
-                        if thumbnail_url:
-                            base_thumb_url = thumbnail_url.replace("{width}", "1280").replace("{height}", "720")
-                            final_thumb_url = f"{base_thumb_url}?t={timestamp}"
-                        else:
-                            final_thumb_url = f"https://static-cdn.jtvnw.net/previews-img/live_user_{TWITCH_CHANNEL_NAME.lower()}-1280x720.jpg?t={timestamp}"
-
-                        current_stream["safe_thumb_url"] = final_thumb_url
-
-                        # 如果這場直播 ID 還沒被記錄過
-                        if self.last_notified_stream_id != current_stream_id:
-                            started_at_str = current_stream.get("started_at")
-                            is_truly_new = True
-
-                            if started_at_str:
-                                try:
-                                    started_at = datetime.datetime.fromisoformat(
-                                        started_at_str.replace("Z", "+00:00")
-                                    )
-                                    now = datetime.datetime.now(datetime.timezone.utc)
-                                    time_since_start = (now - started_at).total_seconds()
-                                    
-                                    # 如果已開播超過 5 分鐘（300秒），說明是機器人重啟碰巧遇到舊直播，不發 @everyone
-                                    if time_since_start > 300:
-                                        print("⚠️ [Stream] 檢測到舊直播重啟，略過 @everyone，僅更新卡片")
-                                        is_truly_new = False
-                                except Exception as e:
-                                    print(f"⚠️ [Stream] 檢查開播時間失敗: {e}")
-
-                            self.last_notified_stream_id = current_stream_id
-
-                            if is_truly_new:
-                                await self.send_stream_notice(current_stream, avatar_url)
-                            else:
-                                await self.update_stream_notice(current_stream, avatar_url)
-                        else:
-                            # 已經記錄過了，正常更新卡片
-                            await self.update_stream_notice(current_stream, avatar_url)
-                    else:
-                        # 沒開台時，重置記錄
-                        if self.last_notified_stream_id is not None:
-                            await self.handle_stream_offline()
-                            self.last_notified_stream_id = None
-
-    @check_twitch_live.before_loop
-    async def before_check(self):
-        await self.bot.wait_until_ready()
-        print("✅ [Ready] Bot 已就緒，開始監控 Twitch...")
-
-    async def send_stream_notice(self, stream_data, avatar_url):
-        channel = self.bot.get_channel(ANNOUNCE_CHANNEL_ID)
-        if not channel:
-            return
-
-        embed = self.build_embed_grid(stream_data, avatar_url)
-        view = StreamView(TWITCH_CHANNEL_NAME)
-        stream_url = f"https://www.twitch.tv/{TWITCH_CHANNEL_NAME}"
-
-        try:
-            msg = await channel.send(
-                content=f"@everyone\n準備狗叫啦~\n<{stream_url}>", embed=embed, view=view
+    @commands.Cog.listener()
+    async def on_voice_state_update(
+        self,
+        member: discord.Member,
+        before: discord.VoiceState,
+        after: discord.VoiceState,
+    ):
+        entered_trigger = (
+            after.channel is not None
+            and after.channel.id == TRIGGER_CHANNEL_ID
+            and (
+                before.channel is None
+                or before.channel.id != TRIGGER_CHANNEL_ID
             )
-            self.last_msg_id = msg.id
-        except Exception as e:
-            print(f"❌ [Send] 發送失敗: {e}")
-
-    async def update_stream_notice(self, stream_data, avatar_url):
-        channel = self.bot.get_channel(ANNOUNCE_CHANNEL_ID)
-        if not channel or not self.last_msg_id:
-            return
-
-        try:
-            msg = await channel.fetch_message(self.last_msg_id)
-            new_embed = self.build_embed_grid(stream_data, avatar_url)
-            view = StreamView(TWITCH_CHANNEL_NAME)
-            await msg.edit(embed=new_embed, view=view)
-        except discord.NotFound:
-            self.last_msg_id = None
-            await self.send_stream_notice(stream_data, avatar_url)
-        except Exception as e:
-            print(f"❌ [Update] 更新失敗: {e}")
-
-    def build_embed_grid(self, stream_data, avatar_url):
-        title = stream_data.get("title", "霓夜開台囉！")
-        game = stream_data.get("game_name", "未指定分類")
-        viewers = stream_data.get("viewer_count", 0)
-        started_at_str = stream_data.get("started_at")
-        stream_url = f"https://www.twitch.tv/{TWITCH_CHANNEL_NAME}"
-        
-        duration_str = "0 hrs, 0 mins"
-        if started_at_str:
-            try:
-                started_at = datetime.datetime.fromisoformat(
-                    started_at_str.replace("Z", "+00:00")
-                )
-                now = datetime.datetime.now(datetime.timezone.utc)
-                duration_delta = now - started_at
-
-                hours = int(duration_delta.total_seconds() // 3600)
-                minutes = int((duration_delta.total_seconds() % 3600) // 60)
-                duration_str = f"{hours} hrs, {minutes} mins"
-            except Exception as e:
-                print(f"⚠️ [BuildEmbed] 時間轉換失敗: {e}")
-
-        embed = discord.Embed(
-            title="🌴 霓夜台 | 直播即時狀態",
-            description=(
-                f"歡迎來到霓夜的直播間！\n"
-                f"**目前直播標題**：[{title}]({stream_url})\n"
-                f"若有問題請在 Discord 反映"
-            ),
-            color=discord.Color.from_rgb(100, 65, 165),
         )
 
-        if avatar_url:
-            embed.set_author(name=f"{TWITCH_CHANNEL_NAME} is now live on Twitch!", icon_url=avatar_url)
-        else:
-            embed.set_author(name=f"{TWITCH_CHANNEL_NAME} is now live on Twitch!")
+        if entered_trigger:
+            await self._create_temp_channel(member, after.channel)
 
-        left_column = f"🟢 正在直播中...\n👥 觀看人數：**{viewers} 人**"
-        right_column = f"🎮 **{game}**\n⏱️ 開台時長：**{duration_str}**"
+        if self._is_temp_channel(before.channel):
+            await self._delete_if_empty(before.channel)
 
-        embed.add_field(name="直播資訊", value=left_column, inline=True)
-        embed.add_field(name="遊戲與時長", value=right_column, inline=True)
+        if (
+            not self._is_temp_channel(after.channel)
+            or not (after.self_mute or after.mute)
+        ):
+            self.mute_started_at.pop(
+                self._mute_key(member),
+                None,
+            )
 
-        thumb_url = stream_data.get("safe_thumb_url", avatar_url)
-        if thumb_url:
-            embed.set_image(url=thumb_url)
+    async def _create_temp_channel(
+        self,
+        member: discord.Member,
+        trigger_channel: discord.VoiceChannel,
+    ):
+        key = self._mute_key(member)
 
-        embed.set_footer(text=f"streamcord.io • Updated every minute • {datetime.datetime.now().strftime('%p %I:%M')}")
-        return embed
+        if key in self._creating_for:
+            return
 
-    async def handle_stream_offline(self):
-        channel = self.bot.get_channel(ANNOUNCE_CHANNEL_ID)
-        if channel and self.last_msg_id:
+        self._creating_for.add(key)
+
+        async with self._create_lock:
+            if (
+                member.voice is None
+                or member.voice.channel != trigger_channel
+            ):
+                self._creating_for.discard(key)
+                return
+
+            channel_name = f"{TEMP_CHANNEL_PREFIX}{member.display_name} 的房間"
+            new_channel: discord.VoiceChannel | None = None
+
             try:
-                msg = await channel.fetch_message(self.last_msg_id)
-                embed = discord.Embed(
-                    title="🌴 霓夜台 | 直播已結束",
-                    description="⚫ **直播已關閉，感謝大家的陪伴！**",
-                    color=discord.Color.dark_gray(),
+                new_channel = await member.guild.create_voice_channel(
+                    name=channel_name,
+                    category=trigger_channel.category,
+                    reason=f"{member.display_name} 建立的臨時語音頻道",
                 )
-                embed.set_footer(text=f"streamcord.io • {datetime.datetime.now().strftime('%p %I:%M')}")
-                await msg.edit(content="💤 **霓夜已關台**", embed=embed, view=None)
-            except Exception as e:
-                print(f"❌ [Offline] 關台更新失敗: {e}")
 
-    @app_commands.command(
-        name="test_stream", description="測試開台通知卡片 (抓取目前真實的實況狀態)"
-    )
-    @app_commands.checks.has_permissions(administrator=True)
-    async def test_stream(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
+                self.temp_channel_ids.add(new_channel.id)
 
-        channel = self.bot.get_channel(ANNOUNCE_CHANNEL_ID)
-        if not channel:
-            await interaction.followup.send("❌ 找不到指定的公告頻道，請檢查 ANNOUNCE_CHANNEL_ID 設定！")
-            return
+                await member.move_to(
+                    new_channel,
+                    reason="移動至新建立的臨時語音頻道",
+                )
 
-        if not self.access_token:
-            await self.get_twitch_token()
+                log.info(
+                    "已建立臨時語音頻道：%s (%s)",
+                    new_channel.name,
+                    new_channel.id,
+                )
 
-        url = f"https://api.twitch.tv/helix/streams?user_login={TWITCH_CHANNEL_NAME}"
-        headers = {
-            "Client-ID": TWITCH_CLIENT_ID,
-            "Authorization": f"Bearer {self.access_token}",
-        }
-        user_url = f"https://api.twitch.tv/helix/users?login={TWITCH_CHANNEL_NAME}"
+            except discord.Forbidden:
+                log.exception("建立或移動臨時語音頻道時權限不足")
 
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers) as resp:
-                streams = (await resp.json()).get("data", []) if resp.status == 200 else []
+            except discord.HTTPException:
+                log.exception("建立或移動臨時語音頻道時發生 Discord API 錯誤")
 
-            avatar_url = None
-            async with session.get(user_url, headers=headers) as user_resp:
-                if user_resp.status == 200:
-                    users = (await user_resp.json()).get("data", [])
-                    if users:
-                        avatar_url = users[0].get("profile_image_url")
+            finally:
+                self._creating_for.discard(key)
 
-        if not streams:
-            await interaction.followup.send("⚠️ **目前 Twitch API 顯示未開台**")
-            return
+                if new_channel is not None and (
+                    member.voice is None
+                    or member.voice.channel != new_channel
+                ):
+                    self.temp_channel_ids.discard(new_channel.id)
 
-        stream_data = streams[0]
-        thumbnail_url = stream_data.get("thumbnail_url", "")
-        timestamp = int(datetime.datetime.now().timestamp())
-        
-        if thumbnail_url:
-            base_thumb_url = thumbnail_url.replace("{width}", "1280").replace("{height}", "720")
-            stream_data["safe_thumb_url"] = f"{base_thumb_url}?t={timestamp}"
-        else:
-            stream_data["safe_thumb_url"] = f"https://static-cdn.jtvnw.net/previews-img/live_user_{TWITCH_CHANNEL_NAME.lower()}-1280x720.jpg?t={timestamp}"
+                    try:
+                        await new_channel.delete(
+                            reason="成員未能移動至臨時語音頻道，清理孤兒頻道",
+                        )
+                    except (
+                        discord.NotFound,
+                        discord.Forbidden,
+                        discord.HTTPException,
+                    ):
+                        log.exception(
+                            "清理孤兒臨時頻道失敗：%s", new_channel.id
+                        )
 
-        embed = self.build_embed_grid(stream_data, avatar_url)
-        view = StreamView(TWITCH_CHANNEL_NAME)
-        stream_url = f"https://www.twitch.tv/{TWITCH_CHANNEL_NAME}"
+    async def _delete_if_empty(
+        self,
+        channel: discord.VoiceChannel,
+    ):
+        async with self._delete_lock:
+            await asyncio.sleep(0.25)
 
-        await channel.send(
-            content=f"@everyone\n準備狗叫啦~\n<{stream_url}>", embed=embed, view=view
-        )
-        await interaction.followup.send("✅ 測試卡片已成功發送至公告頻道！")
+            if (
+                channel.id not in self.temp_channel_ids
+                or len(channel.members) > 0
+            ):
+                return
+
+            self.temp_channel_ids.discard(channel.id)
+
+            try:
+                await channel.delete(reason="臨時語音頻道已無人使用，自動刪除")
+                log.info("已清理空臨時語音頻道：%s (%s)", channel.name, channel.id)
+            except (
+                discord.NotFound,
+                discord.Forbidden,
+                discord.HTTPException,
+            ):
+                log.exception("刪除空臨時語音頻道失敗：%s", channel.id)
+
+    @tasks.loop(seconds=MUTE_CHECK_INTERVAL)
+    async def check_afk_loop(self):
+        now = time.monotonic()
+
+        for guild in self.bot.guilds:
+            rest_channel = guild.get_channel(REST_CHANNEL_ID)
+            if rest_channel is None or not isinstance(rest_channel, discord.VoiceChannel):
+                continue
+
+            for channel in guild.voice_channels:
+                if not self._is_temp_channel(channel):
+                    continue
+
+                for member in channel.members:
+                    if member.bot:
+                        continue
+
+                    is_muted = member.voice.self_mute or member.voice.mute
+
+                    key = self._mute_key(member)
+
+                    if is_muted:
+                        start_time = self.mute_started_at.setdefault(key, now)
+                        if now - start_time >= MUTE_TIMEOUT:
+                            try:
+                                await member.move_to(
+                                    rest_channel,
+                                    reason=f"連續靜音滿 {MUTE_TIMEOUT} 秒，自動移至休息區",
+                                )
+                                log.info(
+                                    "已將成員 %s 移至休息區，因靜音已滿 %.1f 秒",
+                                    member.display_name,
+                                    now - start_time,
+                                )
+                            except (discord.Forbidden, discord.HTTPException):
+                                log.exception(
+                                    "將成員 %s 移動至休息區失敗",
+                                    member.display_name,
+                                )
+                            finally:
+                                self.mute_started_at.pop(key, None)
+                    else:
+                        self.mute_started_at.pop(key, None)
+
+    @check_afk_loop.before_loop
+    async def before_check_afk_loop(self):
+        await self.bot.wait_until_ready()
 
 
-async def setup(bot):
-    await bot.add_cog(StreamCog(bot))
+async def setup(bot: commands.Bot):
+    await bot.add_cog(TempVoiceCog(bot))
