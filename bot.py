@@ -20,7 +20,8 @@ intents.message_content = True
 intents.members = True
 intents.voice_states = True
 
-bot = commands.Bot(command_prefix="/", intents=intents)
+# 修正 1：將 command_prefix 改為 "/" 以外的字元（例如 "!"），避免與 Discord 斜線指令衝突
+bot = commands.Bot(command_prefix="!", intents=intents)
 _commands_synced = False
 
 
