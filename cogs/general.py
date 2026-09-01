@@ -203,11 +203,14 @@ class GeneralCog(commands.Cog):
     async def setup_roles(
         self, 
         interaction: discord.Interaction, 
-        channel: discord.TextChannel, 
         rpg_role: discord.Role, 
-        stream_role: discord.Role = None
+        stream_role: discord.Role = None,
+        channel: discord.TextChannel = None
     ):
         await interaction.response.defer(ephemeral=True)
+        
+        # 如果沒有特別指定頻道，預設發送在目前指令執行的頻道
+        target_channel = channel or interaction.channel
         
         r_id = rpg_role.id
         s_id = stream_role.id if stream_role else STREAM_ROLE_ID_DEFAULT
@@ -231,17 +234,17 @@ class GeneralCog(commands.Cog):
         
         # 若沒有舊面板或編輯失敗，則發送新訊息
         if not msg:
-            msg = await channel.send(content="歡迎進入霓夜的狗窩~領取身分組哦~", view=view)
+            msg = await target_channel.send(content="歡迎進入霓夜的狗窩~領取身分組哦~", view=view)
         
         # 紀錄面板資訊以供定時更新使用
         self.role_panels[guild_id] = {
-            "channel_id": channel.id,
+            "channel_id": target_channel.id,
             "message_id": msg.id,
             "stream_role_id": s_id,
             "rpg_role_id": r_id
         }
 
-        followup_msg = await interaction.followup.send(f"✅ 面板已成功發送到 {channel.mention}（包含身分組：{rpg_role.mention} 與入門飼養員），並已設定自動更新！\n*(訊息將於 {get_delete_timestamp()} 自動刪除)*", ephemeral=True)
+        followup_msg = await interaction.followup.send(f"✅ 面板已成功發送到 {target_channel.mention}（包含身分組：{rpg_role.mention} 與入門飼養員），並已設定自動更新！\n*(訊息將於 {get_delete_timestamp()} 自動刪除)*", ephemeral=True)
         asyncio.create_task(delete_message_later(followup_msg, 60))
 
     @app_commands.command(name="giveaway", description="[管理員] 發起抽獎")
