@@ -30,10 +30,11 @@ class MyBot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix="!", intents=intents)
 
-    def get_guild_id_from_config(self):
+    def get_target_guild(self):
+        # 從環境變數或設定檔讀取你的伺服器 ID
         guild_id = os.getenv("GUILD_ID")
         if guild_id and guild_id.isdigit():
-            return int(guild_id)
+            return discord.Object(id=int(guild_id))
 
         if CONFIG_FILE.exists():
             try:
@@ -41,7 +42,7 @@ class MyBot(commands.Bot):
                     data = json.load(f)
                     gid = data.get("guild_id", "")
                     if str(gid).isdigit():
-                        return int(gid)
+                        return discord.Object(id=int(gid))
             except Exception as e:
                 log.warning("讀取 config.json 的 guild_id 失敗: %s", e)
         return None
@@ -65,7 +66,17 @@ class MyBot(commands.Bot):
         commands_list = self.tree.get_commands()
         log.info(f"目前 tree 內共收集到 {len(commands_list)} 個斜線指令")
         
-        # ⚠️ 注意：這裡拿掉了開機自動同步，改由完全手動觸發，避免時機點錯誤！
+        # 2. ⚡ 開機自動伺服器同步（瞬間完成，不用等全域！）
+        target_guild = self.get_target_guild()
+        if target_guild:
+            try:
+                self.tree.copy_global_to(guild=target_guild)
+                synced = await self.tree.sync(guild=target_guild)
+                log.info(f"✅ 自動同步成功！已將 {len(synced)} 個指令註冊至指定伺服器。")
+            except Exception:
+                log.exception("自動同步至指定伺服器失敗")
+        else:
+            log.warning("⚠️ 未找到 GUILD_ID 或 config.json 中的 guild_id，無法進行快速伺服器同步！")
 
     async def on_ready(self):
         status_name = os.getenv("BOT_STATUS", "線上運作中 🚀")
@@ -82,42 +93,6 @@ class MyBot(commands.Bot):
 
 
 bot = MyBot()
-
-
-@bot.command()
-async def sync(ctx, mode: str = None):
-    """
-    手動同步斜線指令
-    """
-    if not ctx.author.guild_permissions.administrator:
-        await ctx.send(":x: 權限不足：你必須是**伺服器管理員**才能使用這個指令！", delete_after=10)
-        return
-
-    try:
-        try:
-            await ctx.message.delete()
-        except Exception:
-            pass  
-
-        if mode == "guild":
-            # 終極暴力解：直接把目前 tree 裡所有的指令（這 38 個）全部塞進這個伺服器！
-            # 不再使用 copy_global_to，因為如果指令本身帶有 guild_id，複製會失敗。
-            ctx.bot.tree.copy_global_to(guild=ctx.guild) # 將全域指令拷貝過來
-            synced = await ctx.bot.tree.sync(guild=ctx.guild) # 執行同步
-            
-            await ctx.send(
-                f":white_check_mark: 強制同步成功！已將 **{len(synced)}** 個指令註冊至 **當前伺服器 ({ctx.guild.name})**！\n*(請大家按 `Ctrl + R` 重新整理)*", 
-                delete_after=10
-            )
-        else:
-            synced = await bot.tree.sync()
-            await ctx.send(
-                f":earth_africa: 已成功 **全域同步 {len(synced)}** 個指令！\n*(此訊息將於 10 秒後自動刪除)*", 
-                delete_after=10
-            )
-    except Exception as e:
-        log.exception("手動同步指令執行失敗")
-        await ctx.send(f":x: 執行同步時發生錯誤: `{e}`", delete_after=15)
 
 
 @bot.tree.error
