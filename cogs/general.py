@@ -33,19 +33,16 @@ class DynamicRoleSelectionView(discord.ui.View):
             parsed_emoji = None
             clean_label = raw_label
 
-            # 【已修正】放寬正則表達式，支援任意名稱或底線的自訂貼圖格式
             emoji_match = re.search(r"<a?:.*?:(\d+)>", raw_label)
             if emoji_match:
                 emoji_id = int(emoji_match.group(1))
-                # 透過 bot 尋找伺服器內的貼圖物件
                 parsed_emoji = self.bot.get_emoji(emoji_id)
-                # 從按鈕文字中移除貼圖代碼，只留下純文字名稱
                 clean_label = re.sub(r"<a?:.*?:(\d+)>", "", raw_label).strip()
 
             button = discord.ui.Button(
                 label=clean_label if clean_label else "身分組",
                 style=discord.ButtonStyle.secondary,
-                emoji=parsed_emoji, # 放入解析後的 Emoji 物件（若無則為 None）
+                emoji=parsed_emoji,
                 custom_id=f"dynamic_role_btn_{index}_{data['role_id']}"
             )
             button.callback = self.create_callback(data["role_id"], clean_label)
@@ -191,9 +188,16 @@ class GeneralCog(commands.Cog):
             return
 
         await interaction.response.defer(ephemeral=True)
-        deleted = await interaction.channel.purge(limit=amount)
-        msg = await interaction.followup.send(f"🧹 已成功清理 `{len(deleted)}` 條訊息！\n*(訊息將於 {get_delete_timestamp()} 自動刪除)*", ephemeral=True)
-        asyncio.create_task(delete_message_later(msg, 60))
+        try:
+            deleted = await interaction.channel.purge(limit=amount, bulk=True)
+            msg = await interaction.followup.send(f"🧹 已成功清理 `{len(deleted)}` 條訊息！\n*(訊息將於 {get_delete_timestamp()} 自動刪除)*", ephemeral=True)
+            asyncio.create_task(delete_message_later(msg, 60))
+        except discord.Forbidden:
+            msg = await interaction.followup.send("❌ 機器人缺少「管理訊息」權限，無法執行清除！", ephemeral=True)
+            asyncio.create_task(delete_message_later(msg, 60))
+        except discord.HTTPException as e:
+            msg = await interaction.followup.send(f"❌ 清除失敗（可能包含超過 14 天的訊息）：`{e}`", ephemeral=True)
+            asyncio.create_task(delete_message_later(msg, 60))
 
     @app_commands.command(name="setup_roles", description="[管理員] 自訂多身分組領取面板")
     @app_commands.describe(
