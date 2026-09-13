@@ -4,7 +4,7 @@ from discord import app_commands
 from discord.ext import commands
 import yt_dlp
 
-# 設定 yt-dlp 參數：加入完整防護繞過與解碼設定
+# 設定 yt-dlp 參數：加入完整防護繞過與解碼設定（修正 js_runtimes 格式）
 YTDL_OPTIONS = {
     'format': 'bestaudio/best',
     'extractaudio': True,
@@ -20,7 +20,7 @@ YTDL_OPTIONS = {
     'default_search': 'auto',
     'source_address': '0.0.0.0',
     'cookiefile': 'cookies.txt',  # 讀取伺服器根目錄下的 cookies.txt
-    'js_runtimes': {'deno': '/home/ubuntu/.deno/bin/deno'},
+    'js_runtimes': {'deno': {'path': '/home/ubuntu/.deno/bin/deno'}},
     'remote_components': {'ejs': 'github'},
     'extractor_args': {'youtube': {'client': ['tv']}},
 }
